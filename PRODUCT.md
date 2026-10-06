@@ -36,6 +36,8 @@ The core runs inside the app itself: no separate binary, no helper service, no s
 - Profiles: import, create, edit JSON, rename, delete (to Trash), set active, check (build without starting, as `sing-box check`, plus a static check of every tag a configuration refers to).
 - Visual editing of profiles, two layers over the same JSON: wizards for nodes (with share links), local proxy ports, groups, routing rules, rule sets and DNS; and a form of every field, generated from the core's schema with the Chinese text of its documentation.
 - On first open, an offer to import the profiles the app left under its old name (SingBox).
+- Every profile keeps its source (the file imported, the subscription as downloaded, the sample created from), shows where it came from and when, whether it was edited since, and compares the two side by side, block by block back to the source. A subscription update merges three ways and keeps the user's edits; where both changed the same thing, the edit stays and the place is listed.
+- What runs is visible: the profile running, since when, read only; when it was saved since, a notice, the difference, and a reload.
 - Outbound groups: selector switching, URL tests with latency per node; urltest groups choose by themselves.
 - Connections: live list with sequence number, per-connection rate, resolved addresses and the log ID that ties a connection to its log lines; group by client or host; search, close one.
 - Logs: the core's and the app's own (start, stop, system proxy, subscriptions, profiles), filter by source, level and text, copy, export, clear; says when the configuration's level or `log.disabled` hides lines.

@@ -113,12 +113,21 @@ type Profile struct {
 	Modified time.Time `json:"modified"`
 	// Remote is where the profile comes from, for a subscription.
 	Remote *Remote `json:"remote"`
+	// Origin is what the profile was imported, downloaded or created as.
+	Origin *Origin `json:"origin"`
+	// Edited is set when the profile says otherwise than its source.
+	Edited bool `json:"edited"`
 }
 
 // Profiles are the configuration files, and the one Start runs.
 type Profiles struct {
 	Active string    `json:"active"`
 	Items  []Profile `json:"items"`
+	// Running is the profile the core runs, empty while stopped.
+	Running string `json:"running"`
+	// RunningStale is set when the profile running was saved since it
+	// started: what runs is not what the profile says, until reloaded.
+	RunningStale bool `json:"runningStale"`
 }
 
 // CheckResult is the outcome of checking a configuration.
@@ -196,6 +205,9 @@ type Box struct {
 	updateMu   sync.Mutex
 	updatingMu sync.Mutex
 	updating   map[string]bool
+	// writes serializes a save from the page with a subscription update
+	// merging into the same profile, so that neither is lost.
+	writes sync.Mutex
 	// onState follows the state, as the menu bar does.
 	onState atomic.Pointer[func(Snapshot)]
 }
@@ -774,9 +786,39 @@ func (b *Box) Profiles() Profiles {
 	set := b.store.settings()
 	out := Profiles{Active: set.Active, Items: []Profile{}}
 	for _, p := range list {
-		out.Items = append(out.Items, Profile{Name: p.Name, Path: p.Path, Size: p.Size, Modified: p.ModTime.Truncate(time.Millisecond), Remote: set.Remote[p.Name]})
+		out.Items = append(out.Items, Profile{
+			Name: p.Name, Path: p.Path, Size: p.Size, Modified: p.ModTime.Truncate(time.Millisecond),
+			Remote: set.Remote[p.Name], Origin: set.Origins[p.Name], Edited: b.store.edited(p.Name),
+		})
+	}
+	if b.core.Status() == statusRunning {
+		out.Running = b.core.Profile()
+		// Renamed or removed since, it has no saved version to differ from.
+		if current, err := b.store.read(out.Running); err == nil {
+			running := b.core.Content()
+			out.RunningStale = running != nil && !sameConfig(current, running)
+		}
 	}
 	return out
+}
+
+// ReadSource returns the text of what a profile was imported, downloaded
+// or created as.
+func (b *Box) ReadSource(name string) (string, error) {
+	content, err := b.store.source(name)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", errNoSource
+	}
+	return string(content), err
+}
+
+// RunningProfile returns the text of the configuration the core runs, as
+// it was read when started: saves since then are not in it.
+func (b *Box) RunningProfile() (string, error) {
+	if b.core.Status() != statusRunning {
+		return "", errNotRunning
+	}
+	return string(b.core.Content()), nil
 }
 
 // ReadProfile returns the text of a profile.
@@ -787,10 +829,19 @@ func (b *Box) ReadProfile(name string) (string, error) {
 
 // SaveProfile writes the text of a profile.
 func (b *Box) SaveProfile(name, content string) error {
+	b.writes.Lock()
 	err := b.store.write(name, []byte(content))
+	b.writes.Unlock()
 	if err != nil {
 		b.note(log.LevelError, "保存配置“%s”失败：%v", name, err)
 	} else {
+		b.store.markSaved(name)
+		// The conflicts of the last update are the user's to settle: a save
+		// settles them.
+		if r := b.store.settings().Remote[name]; r != nil && len(r.Conflicts) > 0 {
+			r.Conflicts = nil
+			b.store.setRemote(name, r)
+		}
 		b.note(log.LevelInfo, "已保存配置“%s”", name)
 	}
 	b.changed()
@@ -846,6 +897,9 @@ func (b *Box) FormatProfile(content string) (string, error) {
 // NewProfile creates a profile from the sample and returns its name.
 func (b *Box) NewProfile() (string, error) {
 	name, err := b.store.create("新配置", []byte(sampleProfile))
+	if err == nil {
+		err = b.store.setSource(name, []byte(sampleProfile), originNew, "")
+	}
 	if err == nil {
 		b.note(log.LevelInfo, "新建配置“%s”", name)
 	}
@@ -904,6 +958,9 @@ func (b *Box) AddRemoteProfile(name, link string, autoUpdate bool, interval int)
 		name = "订阅"
 	}
 	created, err := b.store.create(name, content)
+	if err == nil {
+		err = b.store.setSource(created, content, originSubscription, "")
+	}
 	if err != nil {
 		return "", err
 	}
@@ -966,22 +1023,65 @@ func (b *Box) UpdateProfile(name string) error {
 		b.note(log.LevelWarn, "更新订阅“%s”失败：%v", name, err)
 		return err
 	}
+	b.writes.Lock()
 	old, _ := b.store.read(name)
-	if err := b.store.write(name, content); err != nil {
+	updated, conflicts, err := b.mergeUpdate(name, old, content)
+	if err == nil {
+		err = b.store.write(name, updated)
+	}
+	b.writes.Unlock()
+	if err != nil {
+		r.Error = err.Error()
+		b.store.setRemote(name, r)
+		b.profilesChanged()
+		b.note(log.LevelWarn, "更新订阅“%s”失败：%v", name, err)
 		return err
 	}
-	r.UpdatedAt, r.Error = time.Now().Truncate(time.Second), ""
+	if err := b.store.setSource(name, content, originSubscription, ""); err != nil {
+		// The next update merges from the source before: mostly the same.
+		b.note(log.LevelWarn, "没能保存订阅“%s”下载的内容作为来源：%v", name, err)
+	}
+	r.UpdatedAt, r.Error, r.Conflicts = time.Now().Truncate(time.Second), "", conflicts
 	b.store.setRemote(name, r)
 	b.profilesChanged()
-	if bytes.Equal(old, content) {
+	switch {
+	case bytes.Equal(old, updated):
 		b.note(log.LevelInfo, "订阅“%s”已是最新", name)
-	} else {
+	case len(conflicts) > 0:
+		b.note(log.LevelWarn, "订阅“%s”已更新，本机修改与更新冲突的 %d 处保留了本机修改：%s", name, len(conflicts), strings.Join(conflicts, "、"))
+	default:
 		b.note(log.LevelInfo, "订阅“%s”已更新", name)
 	}
+	content = updated
 	if !bytes.Equal(old, content) && b.core.Status() == statusRunning && b.core.Profile() == name && b.store.settings().Active == name {
 		return b.Reload()
 	}
 	return nil
+}
+
+// mergeUpdate is the profile a subscription download makes: the download
+// itself, unless the user changed the profile since the last one, when
+// both changes merge. The result must check out, or the profile stays.
+func (b *Box) mergeUpdate(name string, current, download []byte) ([]byte, []string, error) {
+	base, err := b.store.source(name)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		// Nothing to tell edits by: the download, as before sources.
+		b.note(log.LevelWarn, "订阅“%s”没有保存的来源，更新整份替换了配置", name)
+		return download, nil, nil
+	case err != nil:
+		return nil, nil, fmt.Errorf("读取订阅的来源失败，已保留原配置：%w", err)
+	case sameConfig(current, base):
+		return download, nil, nil
+	}
+	merged, conflicts, err := mergeConfig(base, download, current)
+	if err != nil {
+		return nil, nil, fmt.Errorf("没能把本机修改合并进更新，已保留原配置：%w", err)
+	}
+	if _, err := checkConfig(merged); err != nil {
+		return nil, nil, fmt.Errorf("本机修改合并进更新后校验不通过，已保留原配置。可能是本机修改与更新冲突（例如删掉的节点被新规则引用），可以「对比来源」后处理：%w", err)
+	}
+	return merged, conflicts, nil
 }
 
 // updateDue updates the subscriptions whose time has come.

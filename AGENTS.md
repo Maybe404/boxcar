@@ -62,6 +62,8 @@
   - `store.go`：配置文件和设置
   - `refs.go`：静态引用检查（由 schema 的 `x-tag-reference` 驱动）
   - `legacy.go`：从改名前的 SingBox 数据目录导入
+  - `origin.go`：每份配置的来源快照（`profiles/.source/`）和来源信息，判断是否有本机修改
+  - `merge.go`：订阅更新的三方合并（以来源为底，保留本机修改）
   - `build.go`：这个构建没包含的类型（与内核 `include/*_stub.go` 对应，升级内核后核对）
   - `logs.go`：内核日志和 App 自身的记录（`Box.note`），按来源区分
   - `main.go`：窗口、菜单、退出流程

@@ -32,11 +32,14 @@ type settings struct {
 	// LegacyOffered is set once the profiles of the app's old name were
 	// imported, or the offer declined.
 	LegacyOffered bool `json:"legacyOffered,omitempty"`
+	// Origins are where the profiles come from, by name.
+	Origins map[string]*Origin `json:"origins,omitempty"`
 }
 
 // store keeps the profiles and the settings in a directory:
 //
 //	profiles/<name>.json
+//	profiles/.source/<name>.json  what each profile was imported or downloaded as
 //	settings.json
 //	work/              the working directory of the core (cache files)
 type store struct {
@@ -65,7 +68,9 @@ func openStore(dir string) (*store, error) {
 		}
 		s.set.Active = sampleName
 		s.saveLocked()
+		s.setSource(sampleName, []byte(sampleProfile), originSample, "")
 	}
+	s.ensureSources()
 	return s, nil
 }
 
@@ -82,6 +87,11 @@ func (s *store) settings() settings {
 		copied := *r
 		set.Remote[name] = &copied
 	}
+	set.Origins = make(map[string]*Origin, len(s.set.Origins))
+	for name, o := range s.set.Origins {
+		copied := *o
+		set.Origins[name] = &copied
+	}
 	return set
 }
 
@@ -94,7 +104,7 @@ func (s *store) update(fn func(*settings)) {
 
 func (s *store) saveLocked() {
 	data, _ := stdjson.MarshalIndent(s.set, "", "  ")
-	os.WriteFile(filepath.Join(s.dir, "settings.json"), data, 0o644)
+	writeAtomic(s.dir, filepath.Join(s.dir, "settings.json"), data)
 }
 
 // profiles lists the profiles by name.
@@ -140,22 +150,7 @@ func (s *store) write(name string, content []byte) error {
 	// A file of its own for every write, so that saves at once cannot
 	// interleave; renamed over the profile, so that it is never half
 	// written.
-	f, err := os.CreateTemp(s.profilesDir(), "."+name+".*.tmp")
-	if err != nil {
-		return err
-	}
-	_, err = f.Write(content)
-	if closeErr := f.Close(); err == nil {
-		err = closeErr
-	}
-	if err == nil {
-		err = os.Chmod(f.Name(), 0o644)
-	}
-	if err != nil {
-		os.Remove(f.Name())
-		return err
-	}
-	return os.Rename(f.Name(), s.path(name))
+	return writeAtomic(s.profilesDir(), s.path(name), content)
 }
 
 // importFile copies a configuration into the profiles, under a name that
@@ -166,7 +161,11 @@ func (s *store) importFile(path string) (string, error) {
 		return "", err
 	}
 	base := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-	return s.create(base, content)
+	name, err := s.create(base, content)
+	if err == nil {
+		err = s.setSource(name, content, originImport, abbreviateHome(path))
+	}
+	return name, err
 }
 
 // create writes a new profile under base, or base 2, base 3… when taken.
@@ -206,6 +205,7 @@ func (s *store) rename(from, to string) error {
 	if err := os.Rename(s.path(from), s.path(to)); err != nil {
 		return err
 	}
+	s.renameSource(from, to)
 	s.update(func(set *settings) {
 		if set.Active == from {
 			set.Active = to
@@ -225,6 +225,7 @@ func (s *store) remove(name string) error {
 	if err := trash(s.path(name)); err != nil {
 		return err
 	}
+	s.removeSource(name)
 	s.update(func(set *settings) {
 		if set.Active == name {
 			set.Active = ""

@@ -12,17 +12,18 @@ type fakeCore struct {
 	status  coreStatus
 	started int
 	content []byte
+	profile string
 	logs    *logBuffer
 }
 
 func (f *fakeCore) Status() coreStatus   { return f.status }
-func (f *fakeCore) Profile() string      { return "" }
+func (f *fakeCore) Profile() string      { return f.profile }
 func (f *fakeCore) StartedAt() time.Time { return time.Time{} }
 func (f *fakeCore) LastError() error     { return nil }
 func (f *fakeCore) Logs() *logBuffer     { return f.logs }
-func (f *fakeCore) Start(_ string, content []byte) error {
+func (f *fakeCore) Start(profile string, content []byte) error {
 	f.started++
-	f.status, f.content = statusRunning, content
+	f.status, f.content, f.profile = statusRunning, content, profile
 	return nil
 }
 func (f *fakeCore) Stop() error                                { f.status, f.content = statusStopped, nil; return nil }

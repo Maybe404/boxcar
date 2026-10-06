@@ -479,6 +479,75 @@ button {
   border: 0.5px solid var(--hair);
   animation: dialog-in 0.18s var(--ease);
 }
+.dialog.compare {
+  top: 6%;
+  width: min(1120px, calc(100vw - 48px));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 88vh;
+}
+.cmp-labels {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 600;
+}
+.cmp-body {
+  min-height: 200px;
+  height: 64vh;
+  overflow: auto;
+  border: 0.5px solid var(--hair-strong);
+  border-radius: 8px;
+}
+.cmp-body .cm-mergeView,
+.cmp-body > .cm-editor {
+  min-height: 100%;
+}
+.cmp-body .cm-changedLine,
+.cmp-body .cm-deletedChunk {
+  background: var(--line-soft);
+}
+.cmp-body .cm-changedText {
+  background: rgba(46, 92, 246, 0.22) !important;
+}
+.cmp-note {
+  margin-right: auto;
+  font-size: 12px;
+}
+.cmp-plain {
+  position: absolute;
+  right: 0;
+  top: -2px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 400;
+  color: var(--text-3);
+}
+.cmp-body .cm-merge-a .cm-changedText,
+.cmp-body .cm-deletedChunk .cm-deletedText {
+  background: var(--danger-soft) !important;
+}
+.cmp-body .cm-collapsedLines {
+  background: var(--bg-sunk);
+  color: var(--text-3);
+  font-size: 11.5px;
+}
+.cmp-revert {
+  width: 22px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: var(--line-soft);
+  color: var(--line);
+  font-size: 12px;
+  cursor: default;
+}
 /* As pop-in, keeping the dialog centred. */
 @keyframes dialog-in {
   from {
@@ -1464,6 +1533,43 @@ kbd {
   display: flex;
   gap: 6px;
   flex: none;
+}
+.origin-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  padding: 0 20px 10px 24px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+.origin-bar .end {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+.origin-bar.stale {
+  color: var(--text);
+  font-weight: 500;
+}
+.origin-bar.stale .dot {
+  background: var(--danger);
+  box-shadow: 0 0 0 3px var(--danger-soft);
+}
+.tag {
+  flex: none;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--line-soft);
+  color: var(--line);
+  font-size: 10.5px;
+  font-weight: 500;
+}
+.tag.warn {
+  background: var(--danger-soft);
+  color: var(--danger);
 }
 .spin {
   animation: spin 0.9s linear infinite;

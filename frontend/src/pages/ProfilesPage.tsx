@@ -2,13 +2,14 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import CodeMirror from "@uiw/react-codemirror";
 import { json } from "@codemirror/lang-json";
 import { EditorView, keymap } from "@codemirror/view";
-import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
-import { tags } from "@lezer/highlight";
+import { syntaxHighlighting } from "@codemirror/language";
 import { AlertDialog, Dialog, DropdownMenu, Switch, ToggleGroup } from "radix-ui";
 import { CircleCheck, CircleX, Cloud, Download, FileJson, FolderOpen, MoreHorizontal, Pencil, Plus, RefreshCw, Trash2, Wand2 } from "lucide-react";
 import { toast } from "sonner";
-import { box, errorText, events, type CheckResult, type Profiles, type Remote, type Snapshot } from "../api";
+import { box, errorText, events, type CheckResult, type Profile, type Profiles, type Remote, type Snapshot } from "../api";
+import { CompareDialog, type Side } from "../components/CompareDialog";
 import { ago, bytes } from "../format";
+import { editorTheme, highlight } from "../editorTheme";
 
 // The visual editor carries the schema and the documentation of the core:
 // loaded when first shown.
@@ -24,29 +25,6 @@ function savedMode(): Mode {
   }
 }
 
-const editorTheme = EditorView.theme({
-  "&": { backgroundColor: "var(--bg)", color: "var(--text)" },
-  ".cm-content": { fontFamily: "var(--mono)", padding: "12px 0", caretColor: "var(--line)" },
-  ".cm-gutters": { backgroundColor: "var(--bg)", color: "var(--text-3)", border: "none", paddingLeft: "12px" },
-  ".cm-activeLine": { backgroundColor: "var(--hover)" },
-  ".cm-activeLineGutter": { backgroundColor: "transparent", color: "var(--text-2)" },
-  "&.cm-focused": { outline: "none" },
-  "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection": { backgroundColor: "var(--line-soft) !important" },
-  ".cm-cursor": { borderLeftColor: "var(--line)", borderLeftWidth: "2px" },
-  ".cm-matchingBracket": { backgroundColor: "var(--line-soft)", outline: "none" },
-  ".cm-foldGutter span": { color: "var(--text-3)" },
-  ".cm-scroller": { lineHeight: "1.65" },
-});
-
-const highlight = HighlightStyle.define([
-  { tag: tags.propertyName, color: "var(--text)", fontWeight: "600" },
-  { tag: tags.string, color: "var(--text-2)" },
-  { tag: [tags.number, tags.bool, tags.null], color: "var(--line)" },
-  { tag: [tags.punctuation, tags.bracket, tags.separator], color: "var(--text-3)" },
-  { tag: tags.comment, color: "var(--text-3)", fontStyle: "italic" },
-  { tag: tags.invalid, color: "var(--danger)" },
-]);
-
 interface Props {
   snap: Snapshot;
   importPending: boolean;
@@ -58,7 +36,8 @@ interface Props {
 }
 
 export function ProfilesPage({ snap, importPending, onImportHandled, onDirtyChange, version }: Props) {
-  const [list, setList] = useState<Profiles>({ active: "", items: [] });
+  const [list, setList] = useState<Profiles>({ active: "", items: [], running: "", runningStale: false });
+  const [comparing, setComparing] = useState<{ kind: "source" | "running"; a: Side; b?: Side } | null>(null);
   const [chosen, setChosen] = useState("");
   const [text, setText] = useState("");
   const [saved, setSaved] = useState("");
@@ -92,7 +71,8 @@ export function ProfilesPage({ snap, importPending, onImportHandled, onDirtyChan
   }, []);
   useEffect(() => {
     reload();
-  }, [reload, version]);
+    // What runs changes as the core starts, stops or reloads.
+  }, [reload, version, snap.status, snap.startedAt]);
 
   // Read the profile chosen; only the latest read counts.
   const readSeq = useRef(0);
@@ -218,6 +198,33 @@ export function ProfilesPage({ snap, importPending, onImportHandled, onDirtyChan
     }
   };
 
+  // The source beside the editor's text, unsaved changes and all.
+  const compareSource = async () => {
+    try {
+      setComparing({ kind: "source", a: { label: "来源", text: await box.readSource(chosen) }, b: { label: dirty ? "当前（含未保存的修改）" : "当前", text } });
+    } catch (err) {
+      toast.error("没能读取来源", { description: errorText(err) });
+    }
+  };
+  // What runs, beside what is saved when they differ.
+  const showRunning = async () => {
+    try {
+      const running = await box.runningProfile();
+      setComparing(
+        list.runningStale
+          ? { kind: "running", a: { label: "运行中", text: running }, b: { label: "已保存", text: await box.readProfile(list.running) } }
+          : { kind: "running", a: { label: "运行中", text: running } },
+      );
+    } catch (err) {
+      toast.error("没能读取运行中的配置", { description: errorText(err) });
+    }
+  };
+  const reloadCore = () =>
+    box.reload().then(
+      () => toast.success("已重新载入"),
+      (err) => toast.error("重新加载失败", { description: errorText(err) }),
+    );
+
   const extensions = useMemo(
     () => [json(), editorTheme, syntaxHighlighting(highlight), EditorView.lineWrapping, keymap.of([{ key: "Mod-s", preventDefault: true, run: () => (saveRef.current(), true) }])],
     [],
@@ -262,9 +269,11 @@ export function ProfilesPage({ snap, importPending, onImportHandled, onDirtyChan
                   {p.name === list.active && <span className="dot on" title="启动时使用" />}
                   <span className="ellipsis">{p.name}</span>
                   {p.remote && <Cloud size={12} className="faint" style={{ flex: "none" }} />}
+                  {p.name === list.running && <span className={`tag${list.runningStale ? " warn" : ""}`}>{list.runningStale ? "运行中 · 未生效" : "运行中"}</span>}
                 </b>
                 <span>
                   {bytes(p.size)} · {p.remote?.updatedAt ? `更新于${ago(p.remote.updatedAt)}` : ago(p.modified)}
+                  {p.edited && " · 已修改"}
                   {p.remote?.error && <span className="danger-text"> · 更新失败</span>}
                 </span>
               </button>
@@ -360,6 +369,26 @@ export function ProfilesPage({ snap, importPending, onImportHandled, onDirtyChan
               <span>上次更新失败：{profile.remote.error}</span>
             </div>
           )}
+          <OriginBar profile={profile} onCompare={compareSource} />
+          {list.running === profile.name && (
+            <div className={`origin-bar${list.runningStale ? " stale" : ""}`}>
+              <span className="dot on" />
+              <span>
+                {list.runningStale ? "正在运行的是上次启动时的版本，之后保存的修改还没生效" : "内核正在运行这份配置"}
+                {snap.startedAt ? <span className="faint"> · 启动于 {new Date(snap.startedAt).toLocaleTimeString()}</span> : null}
+              </span>
+              <span className="end">
+                <button className="btn ghost" onClick={showRunning}>
+                  {list.runningStale ? "对比运行中与已保存" : "查看运行中的配置"}
+                </button>
+                {list.runningStale && (
+                  <button className="btn" onClick={reloadCore}>
+                    <RefreshCw size={13} /> 重新载入
+                  </button>
+                )}
+              </span>
+            </div>
+          )}
           {mode === "json" ? (
             <div className="editor">
               <CodeMirror
@@ -417,7 +446,7 @@ export function ProfilesPage({ snap, importPending, onImportHandled, onDirtyChan
                 <CircleX size={14} /> {check.error}
               </span>
             ) : (
-              <span className="msg faint">{dirty ? "有未保存的修改" : profile.remote ? "订阅 · 下次更新会覆盖本地修改" : mode === "json" ? "JSON · sing-box 配置" : "可视化编辑 · 改动同步到 JSON"}</span>
+              <span className="msg faint">{dirty ? "有未保存的修改" : profile.remote ? "订阅 · 更新时保留本机修改" : mode === "json" ? "JSON · sing-box 配置" : "可视化编辑 · 改动同步到 JSON"}</span>
             )}
             <span className="end">
               {mode === "json" && (
@@ -457,6 +486,46 @@ export function ProfilesPage({ snap, importPending, onImportHandled, onDirtyChan
             </button>
           </div>
         </div>
+      )}
+
+      {comparing && (
+        <CompareDialog
+          open
+          onOpenChange={(o) => !o && setComparing(null)}
+          title={comparing.kind === "source" ? `「${chosen}」相对来源的修改` : comparing.b ? "运行中与已保存的差异" : "运行中的配置"}
+          description={
+            comparing.kind === "source"
+              ? "左边是导入、下载或新建时的内容，右边是现在的配置。点「→」把左边的一段拿回右边，再放进编辑器，保存后生效。"
+              : comparing.b
+                ? "内核读入的是左边这份；右边是之后保存的。重新载入后，右边的才会生效。"
+                : "内核启动时读入的内容，只读。要修改，请编辑配置后保存并重新载入。"
+          }
+          a={comparing.a}
+          b={comparing.b}
+          onApply={
+            comparing.kind === "source"
+              ? (t) => {
+                  setText(t);
+                  setCheck(null);
+                  setComparing(null);
+                  toast.success("已放进编辑器", { description: "检查无误后保存。" });
+                }
+              : undefined
+          }
+          actions={
+            comparing.kind === "running" && comparing.b ? (
+              <button
+                className="btn"
+                onClick={() => {
+                  setComparing(null);
+                  reloadCore();
+                }}
+              >
+                <RefreshCw size={13} /> 重新载入
+              </button>
+            ) : undefined
+          }
+        />
       )}
 
       <RemoteDialog
@@ -707,5 +776,53 @@ function RemoteDialog({
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
+  );
+}
+
+const originNames: Record<string, string> = {
+  import: "导入",
+  new: "新建",
+  subscription: "订阅",
+  legacy: "从旧版导入",
+  sample: "示例",
+  "": "来源未知",
+};
+
+/** Where the profile comes from, when, and whether it was changed since. */
+function OriginBar({ profile, onCompare }: { profile: Profile; onCompare: () => void }) {
+  const o = profile.origin;
+  if (!o) return null;
+  const conflicts = profile.remote?.conflicts ?? [];
+  return (
+    <>
+      <div className="origin-bar">
+        <span className="faint">来源</span>
+        <span className="ellipsis selectable" title={o.from || undefined}>
+          {o.kind === "" ? "升级前就有的配置，以第一次打开时的内容为来源" : `${originNames[o.kind] ?? o.kind}${o.from ? `：${o.from}` : ""}`}
+          <span className="faint">
+            {" · "}
+            {o.kind === "subscription" ? "下载" : o.kind === "new" || o.kind === "sample" ? "创建" : "导入"}于{ago(o.sourcedAt)}
+            {o.savedAt ? ` · 上次保存于${ago(o.savedAt)}` : ""}
+          </span>
+        </span>
+        <span className="end">
+          {profile.edited ? (
+            <button className="btn ghost" onClick={onCompare} title="对比来源和现在的配置">
+              有本机修改 · 对比来源
+            </button>
+          ) : (
+            <span className="faint">与来源一致</span>
+          )}
+        </span>
+      </div>
+      {conflicts.length > 0 && (
+        <div className="error-line selectable" style={{ margin: "0 24px 10px" }}>
+          <CircleX size={14} />
+          <span>
+            上次更新时，{conflicts.length} 处订阅的改动与本机修改冲突，保留了本机修改：{conflicts.join("、")}
+          </span>
+        </div>
+      )}
+    </>
   );
 }

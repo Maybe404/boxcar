@@ -15,6 +15,7 @@ import type {
   LegacyData,
   LogLine,
   OutboundGroup,
+  Profile,
   Profiles,
   Remote,
   RuleInfo,
@@ -156,17 +157,42 @@ function makePreview() {
   const profiles: Profiles = {
     active: "本地代理示例",
     items: [
-      { name: "本地代理示例", path: "~/Library/Application Support/Boxcar/profiles/本地代理示例.json", size: 512, modified: iso(Date.now() - 36e5), remote: null },
+      {
+        name: "本地代理示例",
+        path: "~/Library/Application Support/Boxcar/profiles/本地代理示例.json",
+        size: 512,
+        modified: iso(Date.now() - 36e5),
+        remote: null,
+        origin: { kind: "sample", sourcedAt: iso(Date.now() - 36e5) },
+        edited: false,
+      },
       {
         name: "机场订阅",
         path: "~/Library/Application Support/Boxcar/profiles/机场订阅.json",
         size: 18342,
-        modified: iso(Date.now() - 864e5),
+        modified: iso(Date.now() - 72e5),
         remote: { url: "https://example.com/sub/sing-box.json", autoUpdate: true, interval: 60, updatedAt: iso(Date.now() - 864e5) },
+        origin: { kind: "subscription", sourcedAt: iso(Date.now() - 864e5), savedAt: iso(Date.now() - 72e5) },
+        edited: false,
       },
     ],
+    running: "",
+    runningStale: false,
   };
   const files: Record<string, string> = { 本地代理示例: sampleConfig, 机场订阅: subscriptionConfig };
+  // What each profile came as: the subscription was edited here, its log level.
+  const sources: Record<string, string> = { 本地代理示例: sampleConfig, 机场订阅: subscriptionConfig.replace(`"level": "warn"`, `"level": "error"`) };
+  let running: { name: string; content: string } | null = null;
+  const sameConfig = (a = "", b = "") => {
+    const pa = parseConfig(a);
+    const pb = parseConfig(b);
+    return pa.ok && pb.ok ? JSON.stringify(pa.value) === JSON.stringify(pb.value) : a === b;
+  };
+  const added = (name: string, content: string, origin: Profile["origin"], remote: Remote | null = null): Profile => {
+    files[name] = content;
+    sources[name] = content;
+    return { name, path: `~/…/profiles/${name}.json`, size: content.length, modified: iso(Date.now()), remote, origin, edited: false };
+  };
   const closed: Connection[] = [];
 
   const bump = () => logs.emit(++version);
@@ -283,6 +309,7 @@ function makePreview() {
       await wait(900);
       status = "running";
       startedAt = Date.now();
+      running = { name: profiles.active, content: files[profiles.active] ?? "" };
       addLog("info", "inbound/mixed[mixed-in]: tcp server started at 127.0.0.1:2080");
       addLog("info", "sing-box started (0.31s)");
       addLog("info", `已启动配置“${profiles.active}”`, "app");
@@ -297,6 +324,7 @@ function makePreview() {
       state.emit(snapshot());
       await wait(400);
       status = "stopped";
+      running = null;
       up = down = 0;
       upHist = [];
       downHist = [];
@@ -386,8 +414,21 @@ function makePreview() {
     async exportLogs() {
       return "";
     },
-    async profiles() {
-      return structuredClone(profiles);
+    async profiles(): Promise<Profiles> {
+      return structuredClone({
+        ...profiles,
+        items: profiles.items.map((p) => ({ ...p, edited: !sameConfig(files[p.name], sources[p.name]) })),
+        running: running?.name ?? "",
+        runningStale: running ? !sameConfig(files[running.name], running.content) : false,
+      });
+    },
+    async readSource(name: string) {
+      if (sources[name] === undefined) throw new Error("这份配置没有保存来源");
+      return sources[name];
+    },
+    async runningProfile() {
+      if (!running) throw new Error("内核未运行");
+      return running.content;
     },
     async readProfile(name: string) {
       await wait(30);
@@ -395,6 +436,9 @@ function makePreview() {
     },
     async saveProfile(name: string, content: string) {
       files[name] = content;
+      const p = profiles.items.find((p) => p.name === name);
+      if (p?.origin) p.origin.savedAt = iso(Date.now());
+      addLog("info", `已保存配置“${name}”`, "app");
     },
     async checkProfile(content: string): Promise<CheckResult> {
       await wait(200);
@@ -415,8 +459,7 @@ function makePreview() {
     async newProfile() {
       let name = "新配置";
       for (let i = 2; files[name] !== undefined; i++) name = `新配置 ${i}`;
-      files[name] = sampleConfig;
-      profiles.items.push({ name, path: `~/…/profiles/${name}.json`, size: sampleConfig.length, modified: iso(Date.now()), remote: null });
+      profiles.items.push(added(name, sampleConfig, { kind: "new", sourcedAt: iso(Date.now()) }));
       return name;
     },
     async importProfiles(): Promise<ImportResult> {
@@ -428,8 +471,7 @@ function makePreview() {
     async addRemoteProfile(name: string, link: string, autoUpdate: boolean, interval: number) {
       await wait(800);
       const n = name || "订阅";
-      files[n] = sampleConfig;
-      profiles.items.push({ name: n, path: `~/…/profiles/${n}.json`, size: sampleConfig.length, modified: iso(Date.now()), remote: { url: link, autoUpdate, interval, updatedAt: iso(Date.now()) } });
+      profiles.items.push(added(n, sampleConfig, { kind: "subscription", sourcedAt: iso(Date.now()) }, { url: link, autoUpdate, interval, updatedAt: iso(Date.now()) }));
       return n;
     },
     async setRemote(name: string, r: Remote) {
@@ -447,11 +489,15 @@ function makePreview() {
       if (!p) return;
       p.name = to;
       files[to] = files[from];
+      sources[to] = sources[from];
       delete files[from];
+      delete sources[from];
       if (profiles.active === from) profiles.active = to;
     },
     async deleteProfile(name: string) {
       profiles.items = profiles.items.filter((p) => p.name !== name);
+      delete files[name];
+      delete sources[name];
       if (profiles.active === name) profiles.active = "";
     },
     async setActive(name: string) {
@@ -469,8 +515,7 @@ function makePreview() {
       const names = ["家里", "机场订阅"].map((base) => {
         let name = base;
         for (let i = 2; files[name] !== undefined; i++) name = `${base} ${i}`;
-        files[name] = sampleConfig;
-        profiles.items.push({ name, path: `~/…/profiles/${name}.json`, size: sampleConfig.length, modified: iso(Date.now()), remote: null });
+        profiles.items.push(added(name, sampleConfig, { kind: "legacy", from: `~/Library/Application Support/SingBox/profiles/${base}.json`, sourcedAt: iso(Date.now()) }));
         return name;
       });
       return { names, failed: [] };

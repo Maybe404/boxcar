@@ -176,6 +176,21 @@ export interface ModeState {
   list: string[];
 }
 
+/** Origin is where a profile comes from, and when it changed. */
+export interface Origin {
+  /**
+   * Kind is import, new, subscription, legacy, sample, or empty when
+   * unknown.
+   */
+  kind: string;
+  /** From is the file it was imported from. */
+  from?: string;
+  /** SourcedAt is when the source was imported, downloaded or created. */
+  sourcedAt: string;
+  /** SavedAt is when the profile was last saved from the app. */
+  savedAt?: string;
+}
+
 /** OutboundGroup is a group of outbounds, as a selector or a urltest. */
 export interface OutboundGroup {
   tag: string;
@@ -208,12 +223,23 @@ export interface Profile {
   modified: string;
   /** Remote is where the profile comes from, for a subscription. */
   remote: Remote | null;
+  /** Origin is what the profile was imported, downloaded or created as. */
+  origin: Origin | null;
+  /** Edited is set when the profile says otherwise than its source. */
+  edited: boolean;
 }
 
 /** Profiles are the configuration files, and the one Start runs. */
 export interface Profiles {
   active: string;
   items: Profile[];
+  /** Running is the profile the core runs, empty while stopped. */
+  running: string;
+  /**
+   * RunningStale is set when the profile running was saved since it
+   * started: what runs is not what the profile says, until reloaded.
+   */
+  runningStale: boolean;
 }
 
 /** Remote is where a profile comes from when it is a subscription. */
@@ -225,6 +251,11 @@ export interface Remote {
   updatedAt?: string;
   /** Error is why the last update failed, empty after a success. */
   error?: string;
+  /**
+   * Conflicts are the places the last update and the user both changed,
+   * where the user's change was kept.
+   */
+  conflicts?: string[];
 }
 
 /** RuleInfo is a rule of the router. */
@@ -468,6 +499,13 @@ export const Box = {
     return call("Box.ReadProfile", name);
   },
   /**
+   * ReadSource returns the text of what a profile was imported, downloaded
+   * or created as.
+   */
+  readSource(name: string): Promise<string> {
+    return call("Box.ReadSource", name);
+  },
+  /**
    * Reload runs the active profile anew: the profile saved, switched or
    * updated takes effect. The node chosen and the mode come back from the
    * cache file, as sing-box keeps them.
@@ -490,6 +528,13 @@ export const Box = {
   /** Rules returns the router's rules of the running core. */
   rules(): Promise<RuleInfo[]> {
     return call("Box.Rules");
+  },
+  /**
+   * RunningProfile returns the text of the configuration the core runs, as
+   * it was read when started: saves since then are not in it.
+   */
+  runningProfile(): Promise<string> {
+    return call("Box.RunningProfile");
   },
   /** SaveProfile writes the text of a profile. */
   saveProfile(name: string, content: string): Promise<void> {

@@ -99,6 +99,9 @@ func (s *store) importLegacy() (ImportResult, error) {
 			continue
 		}
 		name, err := s.create(p.Name, content)
+		if err == nil {
+			err = s.setSource(name, content, originLegacy, abbreviateHome(p.Path))
+		}
 		if err != nil {
 			r.Failed = append(r.Failed, p.Name+"："+err.Error())
 			continue

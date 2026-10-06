@@ -24,6 +24,9 @@ type Remote struct {
 	UpdatedAt time.Time `json:"updatedAt,omitzero"`
 	// Error is why the last update failed, empty after a success.
 	Error string `json:"error,omitempty"`
+	// Conflicts are the places the last update and the user both changed,
+	// where the user's change was kept.
+	Conflicts []string `json:"conflicts,omitempty"`
 }
 
 const (
