@@ -12,6 +12,11 @@ export interface About {
   platform: string;
   mygo: string;
   tags: string[];
+  /**
+   * Missing are the types this build leaves out, as "outbounds/naive":
+   * a configuration using them fails to check or start.
+   */
+  missing: string[];
   dataDir: string;
 }
 
@@ -48,6 +53,16 @@ export interface CheckResult {
 /** Connection is a connection the core routed. */
 export interface Connection {
   id: string;
+  /**
+   * Seq numbers the connections in the order they came, from 1 for
+   * each run.
+   */
+  seq: number;
+  /**
+   * LogID is the ID of the connection in the core's log lines: the
+   * number in "[1234567 12ms]"; zero when unknown.
+   */
+  logId?: number;
   inbound: string;
   inboundType: string;
   network: string;
@@ -56,19 +71,61 @@ export interface Connection {
   destination: string;
   domain: string;
   protocol?: string;
+  /** Client is the client the sniffer recognised, as chromium. */
+  client?: string;
+  /**
+   * Addresses are the IP addresses the domain resolved to, when the
+   * core resolved it.
+   */
+  addresses: string[];
+  /**
+   * OriginDestination is where the connection went first, when a rule
+   * sent it elsewhere.
+   */
+  originDestination?: string;
+  /** FakeIP is set when the destination was a fake IP address. */
+  fakeIp?: boolean;
   user?: string;
   process?: string;
   processPath?: string;
   processId?: number;
+  /**
+   * ViaPath is the process that opened the socket for the app
+   * ProcessPath names, as a system service does for it.
+   */
+  viaPath?: string;
   rule: string;
   outbound: string;
   outboundType: string;
   chain: string[];
   upload: number;
   download: number;
+  /** The rates of the last second, while open: bytes per second. */
+  uploadRate: number;
+  downloadRate: number;
   createdAt: string;
   /** ClosedAt is when the connection closed; zero while open. */
   closedAt?: string;
+}
+
+/** DNSAnswer is a record of an answer. */
+export interface DNSAnswer {
+  name: string;
+  type: string;
+  ttl: number;
+  data: string;
+}
+
+/** DNSResult is the answer of a DNS query through the core. */
+export interface DNSResult {
+  /** Rcode is the response code, as NOERROR or NXDOMAIN. */
+  rcode: string;
+  answers: DNSAnswer[];
+  /**
+   * Took is how long the query took, in milliseconds; a cached answer
+   * takes about none.
+   */
+  took: number;
 }
 
 /** GroupItem is an outbound of a group. */
@@ -101,10 +158,12 @@ export interface LegacyData {
   profiles: string[];
 }
 
-/** LogLine is a line of the core's log. */
+/** LogLine is a line of the log: of the core, or of the app around it. */
 export interface LogLine {
   time: string;
   level: string;
+  /** Source is "core" or "app". */
+  source: string;
   message: string;
 }
 
@@ -192,7 +251,10 @@ export interface Snapshot {
   mode: ModeState;
   /** Warnings are the deprecated parts of the configuration running. */
   warnings: Warning[];
-  /** LogLevel is the level the configuration running logs at. */
+  /**
+   * LogLevel is the level the configuration running logs at, or
+   * "disabled" when it turns the log off.
+   */
   logLevel?: string;
   systemProxy: SystemProxyState;
 }
@@ -334,8 +396,8 @@ export const Box = {
     return call("Box.DismissLegacy");
   },
   /** ExportLogs asks where to save the log, and saves it there. */
-  exportLogs(level: string, query: string): Promise<string> {
-    return call("Box.ExportLogs", level, query);
+  exportLogs(level: string, source: string, query: string): Promise<string> {
+    return call("Box.ExportLogs", level, source, query);
   },
   /**
    * FormatProfile returns a configuration as sing-box reads it, indented.
@@ -376,10 +438,11 @@ export const Box = {
   },
   /**
    * Logs returns the last lines of the log, at most limit, at or above a
-   * level ("error", "warn", "info", "debug" or "all") that contain query.
+   * level ("error", "warn", "info", "debug" or "all"), of a source ("core",
+   * "app", or "" for both), that contain query.
    */
-  logs(level: string, query: string, limit: number): Promise<LogLine[]> {
-    return call("Box.Logs", level, query, limit);
+  logs(level: string, source: string, query: string, limit: number): Promise<LogLine[]> {
+    return call("Box.Logs", level, source, query, limit);
   },
   /** NewProfile creates a profile from the sample and returns its name. */
   newProfile(): Promise<string> {
@@ -392,6 +455,13 @@ export const Box = {
   /** Profiles lists the configuration files. */
   profiles(): Promise<Profiles> {
     return call("Box.Profiles");
+  },
+  /**
+   * QueryDNS looks a name up through the running core's DNS, as its DNS
+   * rules route it: the query goes out for real, as the user asked.
+   */
+  queryDNS(name: string, qtype: string): Promise<DNSResult> {
+    return call("Box.QueryDNS", name, qtype);
   },
   /** ReadProfile returns the text of a profile. */
   readProfile(name: string): Promise<string> {

@@ -18,6 +18,7 @@ import (
 
 	"github.com/egoist/mygo"
 	C "github.com/sagernet/sing-box/constant"
+	sblog "github.com/sagernet/sing-box/log"
 )
 
 // coreVersion is the version of sing-box the app is built from, which
@@ -54,14 +55,21 @@ func main() {
 
 	// A system proxy a previous run left set goes back as it was.
 	proxy := newSystemProxy(filepath.Join(dir, "system-proxy.json"))
-	if err := proxy.recover(); err != nil {
-		log.Println("restore the system proxy:", err)
+	recovered, recoverErr := proxy.recover()
+	if recoverErr != nil {
+		log.Println("restore the system proxy:", recoverErr)
 	}
 
 	var box *Box
 	core := newBoxCore(func() { box.changed() })
 	box = newBox(core, st, proxy)
 	core.Logs().onAppend = box.logged
+	switch {
+	case recoverErr != nil:
+		box.note(sblog.LevelError, "上次退出时没能恢复系统代理，这次也没能恢复：%v", recoverErr)
+	case recovered:
+		box.note(sblog.LevelWarn, "上次退出时没能恢复系统代理，已恢复为原来的设置")
+	}
 	mygo.Bind(box)
 	go box.broadcast()
 	go box.broadcastLogs()

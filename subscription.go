@@ -59,6 +59,12 @@ func fetchProfile(ctx context.Context, link string) ([]byte, error) {
 	req.Header.Set("User-Agent", fmt.Sprintf("Boxcar/%s (sing-box %s; macOS)", appVersion(), C.Version))
 	resp, err := client.Do(req)
 	if err != nil {
+		// Without the address, which may carry the subscription's token:
+		// the error goes into the log, which people copy to ask for help.
+		var ue *url.Error
+		if errors.As(err, &ue) {
+			err = ue.Err
+		}
 		return nil, fmt.Errorf("下载失败：%w", err)
 	}
 	defer resp.Body.Close()

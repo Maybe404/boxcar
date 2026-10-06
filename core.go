@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"runtime"
 	"slices"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/trafficcontrol"
 	"github.com/sagernet/sing-box/common/urltest"
+	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/experimental/clashmode"
 	"github.com/sagernet/sing-box/experimental/deprecated"
 	"github.com/sagernet/sing-box/include"
@@ -27,6 +29,7 @@ import (
 	"github.com/sagernet/sing/service"
 
 	"github.com/gofrs/uuid/v5"
+	mDNS "github.com/miekg/dns"
 )
 
 // coreStatus is where the embedded sing-box instance is in its life.
@@ -131,28 +134,68 @@ type OutboundGroup struct {
 
 // Connection is a connection the core routed.
 type Connection struct {
-	ID           string    `json:"id"`
-	Inbound      string    `json:"inbound"`
-	InboundType  string    `json:"inboundType"`
-	Network      string    `json:"network"`
-	IPVersion    int       `json:"ipVersion,omitempty"`
-	Source       string    `json:"source"`
-	Destination  string    `json:"destination"`
-	Domain       string    `json:"domain"`
-	Protocol     string    `json:"protocol,omitempty"`
-	User         string    `json:"user,omitempty"`
-	Process      string    `json:"process,omitempty"`
-	ProcessPath  string    `json:"processPath,omitempty"`
-	ProcessID    int       `json:"processId,omitempty"`
-	Rule         string    `json:"rule"`
-	Outbound     string    `json:"outbound"`
-	OutboundType string    `json:"outboundType"`
-	Chain        []string  `json:"chain"`
-	Upload       int64     `json:"upload"`
-	Download     int64     `json:"download"`
+	ID string `json:"id"`
+	// Seq numbers the connections in the order they came, from 1 for
+	// each run.
+	Seq int64 `json:"seq"`
+	// LogID is the ID of the connection in the core's log lines: the
+	// number in "[1234567 12ms]"; zero when unknown.
+	LogID       uint32 `json:"logId,omitempty"`
+	Inbound     string `json:"inbound"`
+	InboundType string `json:"inboundType"`
+	Network     string `json:"network"`
+	IPVersion   int    `json:"ipVersion,omitempty"`
+	Source      string `json:"source"`
+	Destination string `json:"destination"`
+	Domain      string `json:"domain"`
+	Protocol    string `json:"protocol,omitempty"`
+	// Client is the client the sniffer recognised, as chromium.
+	Client string `json:"client,omitempty"`
+	// Addresses are the IP addresses the domain resolved to, when the
+	// core resolved it.
+	Addresses []string `json:"addresses"`
+	// OriginDestination is where the connection went first, when a rule
+	// sent it elsewhere.
+	OriginDestination string `json:"originDestination,omitempty"`
+	// FakeIP is set when the destination was a fake IP address.
+	FakeIP      bool   `json:"fakeIp,omitempty"`
+	User        string `json:"user,omitempty"`
+	Process     string `json:"process,omitempty"`
+	ProcessPath string `json:"processPath,omitempty"`
+	ProcessID   int    `json:"processId,omitempty"`
+	// ViaPath is the process that opened the socket for the app
+	// ProcessPath names, as a system service does for it.
+	ViaPath      string   `json:"viaPath,omitempty"`
+	Rule         string   `json:"rule"`
+	Outbound     string   `json:"outbound"`
+	OutboundType string   `json:"outboundType"`
+	Chain        []string `json:"chain"`
+	Upload       int64    `json:"upload"`
+	Download     int64    `json:"download"`
+	// The rates of the last second, while open: bytes per second.
+	UploadRate   int64     `json:"uploadRate"`
+	DownloadRate int64     `json:"downloadRate"`
 	CreatedAt    time.Time `json:"createdAt"`
 	// ClosedAt is when the connection closed; zero while open.
 	ClosedAt time.Time `json:"closedAt,omitzero"`
+}
+
+// DNSResult is the answer of a DNS query through the core.
+type DNSResult struct {
+	// Rcode is the response code, as NOERROR or NXDOMAIN.
+	Rcode   string      `json:"rcode"`
+	Answers []DNSAnswer `json:"answers"`
+	// Took is how long the query took, in milliseconds; a cached answer
+	// takes about none.
+	Took int `json:"took"`
+}
+
+// DNSAnswer is a record of an answer.
+type DNSAnswer struct {
+	Name string `json:"name"`
+	Type string `json:"type"`
+	TTL  uint32 `json:"ttl"`
+	Data string `json:"data"`
 }
 
 // Stats are the figures of a running instance.
@@ -221,6 +264,8 @@ type Core interface {
 	Rules() []RuleInfo
 	ClearDNSCache()
 	ResetFakeIP() error
+	// QueryDNS asks the running core's DNS, as its rules route the name.
+	QueryDNS(name, qtype string) (DNSResult, error)
 	// LogLevel is the level the running configuration logs at.
 	LogLevel() string
 	Logs() *logBuffer
@@ -244,6 +289,8 @@ type boxCore struct {
 	mode     *clashmode.Manager
 	notes    *notes
 	logLevel log.Level
+	// logDisabled is set when the configuration turns the log off.
+	logDisabled bool
 	// testHook carries the URL tests' results to the page.
 	testHook *observable.Subscriber[struct{}]
 
@@ -360,6 +407,7 @@ func (c *boxCore) start(content []byte) error {
 	}
 	level := configLogLevel(options)
 	c.logs.setLevel(level)
+	logDisabled := options.Log != nil && options.Log.Disabled
 	history := urltest.NewHistoryStorage()
 	ctx = service.ContextWithPtr(ctx, history)
 	instance, err := box.New(box.Options{Context: ctx, Options: options, PlatformLogWriter: c.logs})
@@ -384,6 +432,7 @@ func (c *boxCore) start(content []byte) error {
 	}
 	c.mu.Lock()
 	c.ctx, c.cancel, c.instance, c.history, c.logLevel, c.testHook = ctx, cancel, instance, history, level, hook
+	c.logDisabled = logDisabled
 	c.traffic = service.PtrFromContext[trafficcontrol.Manager](ctx)
 	c.outbound = service.FromContext[adapter.OutboundManager](ctx)
 	c.conns = service.FromContext[adapter.ConnectionManager](ctx)
@@ -514,6 +563,10 @@ func (c *boxCore) LogLevel() string {
 	defer c.mu.Unlock()
 	if c.status != statusRunning {
 		return ""
+	}
+	if c.logDisabled {
+		// The core logs nothing at all, not even to the platform writer.
+		return "disabled"
 	}
 	return log.FormatLevel(c.logLevel)
 }
@@ -753,6 +806,55 @@ func (c *boxCore) ClearDNSCache() {
 	}
 }
 
+func (c *boxCore) QueryDNS(name, qtype string) (DNSResult, error) {
+	c.mu.Lock()
+	ctx := c.ctx
+	c.mu.Unlock()
+	if ctx == nil {
+		return DNSResult{}, errNotRunning
+	}
+	router := service.FromContext[adapter.DNSRouter](ctx)
+	if router == nil {
+		return DNSResult{}, errNotRunning
+	}
+	return queryDNS(ctx, router, name, qtype)
+}
+
+// queryDNS asks a DNS router, as the clash API's /dns/query does.
+func queryDNS(ctx context.Context, router adapter.DNSRouter, name, qtype string) (DNSResult, error) {
+	name = strings.TrimSuffix(strings.TrimSpace(name), ".")
+	if name == "" {
+		return DNSResult{}, errors.New("填写要查询的域名")
+	}
+	if qtype == "" {
+		qtype = "A"
+	}
+	t, ok := mDNS.StringToType[strings.ToUpper(qtype)]
+	if !ok {
+		return DNSResult{}, fmt.Errorf("不认识的记录类型 %s", qtype)
+	}
+	ctx, cancel := context.WithTimeout(ctx, C.DNSTimeout)
+	defer cancel()
+	msg := new(mDNS.Msg)
+	msg.SetQuestion(mDNS.Fqdn(name), t)
+	began := time.Now()
+	resp, err := router.Exchange(ctx, msg, adapter.DNSQueryOptions{})
+	if err != nil {
+		return DNSResult{}, err
+	}
+	r := DNSResult{Rcode: mDNS.RcodeToString[resp.Rcode], Answers: []DNSAnswer{}, Took: int(time.Since(began).Milliseconds())}
+	for _, rr := range resp.Answer {
+		h := rr.Header()
+		r.Answers = append(r.Answers, DNSAnswer{
+			Name: strings.TrimSuffix(h.Name, "."),
+			Type: mDNS.TypeToString[h.Rrtype],
+			TTL:  h.Ttl,
+			Data: strings.TrimSpace(rr.String()[len(h.String()):]),
+		})
+	}
+	return r, nil
+}
+
 func (c *boxCore) ResetFakeIP() error {
 	c.mu.Lock()
 	ctx := c.ctx
@@ -760,11 +862,14 @@ func (c *boxCore) ResetFakeIP() error {
 	if ctx == nil {
 		return errNotRunning
 	}
-	cache := service.FromContext[adapter.CacheFile](ctx)
-	if cache == nil {
-		return errors.New("配置没有启用缓存文件")
+	// The store of the FakeIP server: in the cache file with store_fakeip,
+	// in memory otherwise; resetting the cache file alone would leave the
+	// one in memory.
+	transports := service.FromContext[adapter.DNSTransportManager](ctx)
+	if transports == nil || transports.FakeIP() == nil {
+		return errors.New("配置里没有 FakeIP DNS 服务器")
 	}
-	return cache.FakeIPReset()
+	return transports.FakeIP().Store().Reset()
 }
 
 // notifyOn returns a subscriber that calls fn for every event, until closed.

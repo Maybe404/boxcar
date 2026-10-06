@@ -10,6 +10,7 @@ import (
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/trafficcontrol"
+	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-tun"
 	N "github.com/sagernet/sing/common/network"
 
@@ -22,10 +23,19 @@ const historyLimit = 3000
 
 // connRecord is a connection the core routed.
 type connRecord struct {
-	meta     *trafficcontrol.TrackerMetadata
+	meta *trafficcontrol.TrackerMetadata
+	// seq numbers the connections in the order they came, from 1.
+	seq int64
+	// logID is the ID the core's log lines of the connection carry,
+	// zero when its context had none.
+	logID    uint32
 	closedAt time.Time
 	// The totals once closed; while open they are read from meta.
 	upload, download int64
+	// The rates of the last second, while open, and the totals they were
+	// measured from.
+	uploadRate, downloadRate int64
+	lastUp, lastDown         int64
 }
 
 // connHistory records every connection the router hands to its trackers,
@@ -36,6 +46,7 @@ type connHistory struct {
 	mu      sync.Mutex
 	records []*connRecord
 	byID    map[uuid.UUID]*connRecord
+	seq     int64
 }
 
 var _ adapter.ConnectionTracker = (*connHistory)(nil)
@@ -50,7 +61,7 @@ type metadataTracker interface {
 
 // add records a connection, given as wrapped by the traffic manager, which
 // is the router's first tracker.
-func (h *connHistory) add(conn any) {
+func (h *connHistory) add(ctx context.Context, conn any) {
 	t, ok := conn.(metadataTracker)
 	if !ok {
 		return
@@ -61,7 +72,11 @@ func (h *connHistory) add(conn any) {
 	if _, loaded := h.byID[meta.ID]; loaded {
 		return
 	}
-	r := &connRecord{meta: meta}
+	h.seq++
+	r := &connRecord{meta: meta, seq: h.seq}
+	if id, ok := log.IDFromContext(ctx); ok {
+		r.logID = id.ID
+	}
 	h.records = append(h.records, r)
 	h.byID[meta.ID] = r
 	if len(h.records) > historyLimit {
@@ -84,13 +99,13 @@ func (h *connHistory) trimLocked() {
 	h.records = kept
 }
 
-func (h *connHistory) RoutedConnection(_ context.Context, conn net.Conn, _ adapter.InboundContext, _ adapter.Rule, _ adapter.Outbound) net.Conn {
-	h.add(conn)
+func (h *connHistory) RoutedConnection(ctx context.Context, conn net.Conn, _ adapter.InboundContext, _ adapter.Rule, _ adapter.Outbound) net.Conn {
+	h.add(ctx, conn)
 	return conn
 }
 
-func (h *connHistory) RoutedPacketConnection(_ context.Context, conn N.PacketConn, _ adapter.InboundContext, _ adapter.Rule, _ adapter.Outbound) N.PacketConn {
-	h.add(conn)
+func (h *connHistory) RoutedPacketConnection(ctx context.Context, conn N.PacketConn, _ adapter.InboundContext, _ adapter.Rule, _ adapter.Outbound) N.PacketConn {
+	h.add(ctx, conn)
 	return conn
 }
 
@@ -99,15 +114,24 @@ func (h *connHistory) RoutedFlow(context.Context, adapter.InboundContext, adapte
 }
 
 // reconcile marks the records whose connections the traffic manager no
-// longer has as closed, with their final totals.
+// longer has as closed, with their final totals, and measures the rates
+// of the others: it runs once a second.
 func (h *connHistory) reconcile(traffic *trafficcontrol.Manager, now time.Time) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for _, r := range h.records {
-		if r.closedAt.IsZero() && traffic.Connection(r.meta.ID) == nil {
-			r.closedAt = now
-			r.upload, r.download = r.meta.Upload.Load(), r.meta.Download.Load()
+		if !r.closedAt.IsZero() {
+			continue
 		}
+		up, down := r.meta.Upload.Load(), r.meta.Download.Load()
+		if traffic.Connection(r.meta.ID) == nil {
+			r.closedAt = now
+			r.upload, r.download = up, down
+			r.uploadRate, r.downloadRate = 0, 0
+			continue
+		}
+		r.uploadRate, r.downloadRate = max(up-r.lastUp, 0), max(down-r.lastDown, 0)
+		r.lastUp, r.lastDown = up, down
 	}
 }
 
@@ -148,6 +172,7 @@ func (h *connHistory) list(closed bool) []Connection {
 		r := records[i]
 		h.mu.Lock()
 		closedAt, up, down := r.closedAt, r.upload, r.download
+		upRate, downRate := r.uploadRate, r.downloadRate
 		h.mu.Unlock()
 		if closed != !closedAt.IsZero() {
 			continue
@@ -155,7 +180,9 @@ func (h *connHistory) list(closed bool) []Connection {
 		if closedAt.IsZero() {
 			up, down = r.meta.Upload.Load(), r.meta.Download.Load()
 		}
-		out = append(out, toConnection(r.meta, closedAt, up, down))
+		c := toConnection(r.meta, closedAt, up, down)
+		c.Seq, c.LogID, c.UploadRate, c.DownloadRate = r.seq, r.logID, upRate, downRate
+		out = append(out, c)
 	}
 	return out
 }
@@ -171,6 +198,8 @@ func toConnection(m *trafficcontrol.TrackerMetadata, closedAt time.Time, up, dow
 		Destination:  md.Destination.String(),
 		Domain:       md.Domain,
 		Protocol:     md.Protocol,
+		Client:       md.Client,
+		FakeIP:       md.FakeIP,
 		User:         md.User,
 		Outbound:     m.Outbound,
 		OutboundType: m.OutboundType,
@@ -181,6 +210,14 @@ func toConnection(m *trafficcontrol.TrackerMetadata, closedAt time.Time, up, dow
 	}
 	if c.Chain == nil {
 		c.Chain = []string{}
+	}
+	c.Addresses = make([]string, len(md.DestinationAddresses))
+	for i, a := range md.DestinationAddresses {
+		c.Addresses[i] = a.String()
+	}
+	// Where the connection went first, when a rule sent it elsewhere.
+	if md.OriginDestination.IsValid() && md.OriginDestination != md.Destination {
+		c.OriginDestination = md.OriginDestination.String()
 	}
 	if m.Rule != nil {
 		c.Rule = m.Rule.String() + " => " + m.Rule.Action().String()
@@ -194,6 +231,10 @@ func toConnection(m *trafficcontrol.TrackerMetadata, closedAt time.Time, up, dow
 		if len(p.ProcessPaths) > 0 {
 			c.ProcessPath = p.ProcessPaths[0]
 			c.Process = p.ProcessPaths[0][strings.LastIndex(p.ProcessPaths[0], "/")+1:]
+		}
+		// The process that opened the socket, when it did so for the app.
+		if len(p.ProcessPaths) > 1 {
+			c.ViaPath = p.ProcessPaths[1]
 		}
 		c.ProcessID = int(p.ProcessID)
 	}

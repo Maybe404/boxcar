@@ -53,21 +53,21 @@ func newSystemProxy(path string) *systemProxy {
 }
 
 // recover restores the proxy that a previous run of the app left set,
-// when it did not get to.
-func (p *systemProxy) recover() error {
+// when it did not get to, and reports whether there was one.
+func (p *systemProxy) recover() (bool, error) {
 	data, err := os.ReadFile(p.path)
 	if err != nil {
-		return nil
+		return false, nil
 	}
 	var snap proxySnapshot
 	if stdjson.Unmarshal(data, &snap) != nil || snap.Service == "" {
 		os.Remove(p.path)
-		return nil
+		return false, nil
 	}
 	p.mu.Lock()
 	p.snap = &snap
 	p.mu.Unlock()
-	return p.disable()
+	return true, p.disable()
 }
 
 // active reports whether the app has set the system proxy, and where.

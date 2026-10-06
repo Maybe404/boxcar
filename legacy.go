@@ -5,6 +5,8 @@ import (
 	stdjson "encoding/json"
 	"os"
 	"path/filepath"
+
+	"github.com/sagernet/sing-box/log"
 )
 
 // Before it was renamed, the app was SingBox, and kept its data in
@@ -134,6 +136,12 @@ func (b *Box) LegacyData() LegacyData { return b.store.legacy() }
 // The old directory is left as it is.
 func (b *Box) ImportLegacy() (ImportResult, error) {
 	r, err := b.store.importLegacy()
+	for _, name := range r.Names {
+		b.note(log.LevelInfo, "从旧版导入配置“%s”", name)
+	}
+	for _, failed := range r.Failed {
+		b.note(log.LevelError, "从旧版导入失败：%s", failed)
+	}
 	applyTheme(b.store.settings().Theme)
 	b.changed()
 	return r, err

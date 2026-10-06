@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/egoist/mygo"
+	sblog "github.com/sagernet/sing-box/log"
 )
 
 //go:embed resources/tray.png
@@ -27,6 +28,7 @@ func newTray(b *Box) *tray {
 	icon, err := mygo.NewTray(mygo.TrayOptions{Icon: trayIcon, IconIsTemplate: true, ToolTip: appName})
 	if err != nil {
 		log.Println("tray:", err)
+		b.note(sblog.LevelError, "没能创建菜单栏图标：%v", err)
 		return t
 	}
 	t.icon = icon

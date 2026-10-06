@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -187,5 +188,19 @@ func TestMissingInboundIsNotFatal(t *testing.T) {
 	r := b.CheckProfile(strings.Replace(refsBase, `{"inbound": "mixed-in",`, `{"inbound": "socks-in",`, 1))
 	if !r.OK || len(r.Problems) != 1 || r.Problems[0].Fatal {
 		t.Fatalf("check %+v", r)
+	}
+}
+
+func TestMissingTypesFollowTheBuild(t *testing.T) {
+	all := []string{"with_quic", "with_wireguard", "with_tailscale", "with_dhcp", "with_acme", "with_naive_outbound", "with_cloudflared", "with_ccm", "with_ocm", "with_openconnect", "with_openvpn", "with_usbip"}
+	if m := missingTypes(all, true); len(m) != 0 {
+		t.Fatalf("missing with every tag: %v", m)
+	}
+	m := missingTypes(all, false)
+	if !slices.Equal(m, []string{"services/ccm", "services/usbip-client", "services/usbip-server"}) {
+		t.Fatalf("missing without cgo: %v", m)
+	}
+	if m := missingTypes(nil, false); !slices.Contains(m, "outbounds/naive") || !slices.Contains(m, "endpoints/wireguard") || !slices.Contains(m, "dns.servers/openvpn") {
+		t.Fatalf("missing without tags: %v", m)
 	}
 }

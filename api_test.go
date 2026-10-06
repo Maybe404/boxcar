@@ -25,26 +25,27 @@ func (f *fakeCore) Start(_ string, content []byte) error {
 	f.status, f.content = statusRunning, content
 	return nil
 }
-func (f *fakeCore) Stop() error                      { f.status, f.content = statusStopped, nil; return nil }
-func (f *fakeCore) Shutdown()                        { f.Stop() }
-func (f *fakeCore) Content() []byte                  { return f.content }
-func (f *fakeCore) Stats() Stats                     { return Stats{} }
-func (f *fakeCore) Groups() []OutboundGroup          { return nil }
-func (f *fakeCore) Chain() []string                  { return nil }
-func (f *fakeCore) SelectOutbound(_, _ string) error { return nil }
-func (f *fakeCore) URLTest(string)                   {}
-func (f *fakeCore) TestOutbound(string) (int, error) { return 0, nil }
-func (f *fakeCore) Mode() ModeState                  { return ModeState{List: []string{}} }
-func (f *fakeCore) SetMode(string) error             { return nil }
-func (f *fakeCore) Connections(bool) []Connection    { return nil }
-func (f *fakeCore) CloseConnection(string)           {}
-func (f *fakeCore) CloseAllConnections()             {}
-func (f *fakeCore) ClearClosedConnections()          {}
-func (f *fakeCore) Warnings() []Warning              { return nil }
-func (f *fakeCore) Rules() []RuleInfo                { return nil }
-func (f *fakeCore) ClearDNSCache()                   {}
-func (f *fakeCore) ResetFakeIP() error               { return nil }
-func (f *fakeCore) LogLevel() string                 { return "" }
+func (f *fakeCore) Stop() error                                { f.status, f.content = statusStopped, nil; return nil }
+func (f *fakeCore) Shutdown()                                  { f.Stop() }
+func (f *fakeCore) Content() []byte                            { return f.content }
+func (f *fakeCore) Stats() Stats                               { return Stats{} }
+func (f *fakeCore) Groups() []OutboundGroup                    { return nil }
+func (f *fakeCore) Chain() []string                            { return nil }
+func (f *fakeCore) SelectOutbound(_, _ string) error           { return nil }
+func (f *fakeCore) URLTest(string)                             {}
+func (f *fakeCore) TestOutbound(string) (int, error)           { return 0, nil }
+func (f *fakeCore) Mode() ModeState                            { return ModeState{List: []string{}} }
+func (f *fakeCore) SetMode(string) error                       { return nil }
+func (f *fakeCore) Connections(bool) []Connection              { return nil }
+func (f *fakeCore) CloseConnection(string)                     {}
+func (f *fakeCore) CloseAllConnections()                       {}
+func (f *fakeCore) ClearClosedConnections()                    {}
+func (f *fakeCore) Warnings() []Warning                        { return nil }
+func (f *fakeCore) Rules() []RuleInfo                          { return nil }
+func (f *fakeCore) ClearDNSCache()                             {}
+func (f *fakeCore) ResetFakeIP() error                         { return nil }
+func (f *fakeCore) QueryDNS(string, string) (DNSResult, error) { return DNSResult{}, errNotRunning }
+func (f *fakeCore) LogLevel() string                           { return "" }
 
 func newTestBox(t *testing.T) (*Box, *fakeCore) {
 	dir := t.TempDir()
@@ -182,9 +183,18 @@ func TestLogLevelAndPrefix(t *testing.T) {
 	b.setLevel(3) // warn
 	b.WriteMessage(4, "INFO[0001] dns: lookup example.com")
 	b.WriteMessage(2, "ERROR[0002] router: boom")
-	lines, _ := b.snapshot(6, "")
-	if len(lines) != 1 || lines[0].Message != "router: boom" {
+	lines, _ := b.snapshot(6, "", "")
+	if len(lines) != 1 || lines[0].Message != "router: boom" || lines[0].Source != sourceCore {
 		t.Fatalf("lines %+v", lines)
+	}
+	// The app's lines are kept whatever the configuration's level, and
+	// apart by source.
+	b.add(4, "系统代理已开启")
+	if app, _ := b.snapshot(6, sourceApp, ""); len(app) != 1 || app[0].Message != "系统代理已开启" {
+		t.Fatalf("app lines %+v", app)
+	}
+	if core, _ := b.snapshot(6, sourceCore, ""); len(core) != 1 {
+		t.Fatalf("core lines %+v", core)
 	}
 	if acts := b.activity.list("", "", 10); len(acts) != 1 || acts[0].Kind != ActivityDNS {
 		t.Fatalf("activity %+v", acts)

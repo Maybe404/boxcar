@@ -7,6 +7,7 @@ tool github.com/egoist/mygo/cmd/mygo
 require (
 	github.com/egoist/mygo v0.2.12
 	github.com/gofrs/uuid/v5 v5.5.1
+	github.com/miekg/dns v1.1.72
 	github.com/sagernet/sing v0.9.7-0.20260929150544-6f21f2425a95
 	github.com/sagernet/sing-box v1.14.3-0.20261003105312-2ff3985c0a8f
 	github.com/sagernet/sing-tun v0.9.7-0.20261002083955-3f8acd9da65b
@@ -78,7 +79,6 @@ require (
 	github.com/mdlayher/socket v0.6.0 // indirect
 	github.com/metacubex/utls v1.8.7 // indirect
 	github.com/mholt/acmez/v3 v3.1.6 // indirect
-	github.com/miekg/dns v1.1.72 // indirect
 	github.com/mitchellh/go-ps v1.0.0 // indirect
 	github.com/openai/openai-go/v3 v3.26.0 // indirect
 	github.com/pierrec/lz4/v4 v4.1.26 // indirect

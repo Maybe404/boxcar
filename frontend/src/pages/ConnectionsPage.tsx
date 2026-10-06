@@ -6,19 +6,26 @@ import { useEffect, useMemo, useState } from "react";
 import { Dialog, ToggleGroup } from "radix-ui";
 import { Search, X } from "lucide-react";
 import { box, events, type Activity, type ActivityKind, type Connection, type Snapshot } from "../api";
-import { bytes, clock, duration } from "../format";
+import { bytes, clock, duration, rate } from "../format";
 import { useNow, usePoll } from "../hooks";
 import { Route } from "../components/Route";
 import { Stopped } from "../components/Stopped";
 
 type Tab = "open" | "closed" | "activity";
 type Sort = "time" | "traffic" | "host";
+/** How the list is split: by the program that made the connection, or by where it went. */
+type GroupBy = "" | "process" | "host";
+
+const processOf = (c: Connection) => c.process || "未知进程";
+const hostOf = (c: Connection) => c.domain || c.destination.replace(/:\d+$/, "").replace(/^\[(.*)\]$/, "$1");
 
 export function ConnectionsPage({ snap }: { snap: Snapshot }) {
   const running = snap.status === "running";
   const [tab, setTab] = useState<Tab>("open");
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<Sort>("time");
+  const [groupBy, setGroupBy] = useState<GroupBy>("");
+  const [chosen, setGroup] = useState<string | null>(null);
   const [detail, setDetail] = useState<Connection | null>(null);
   const now = useNow(tab !== "activity");
   const [conns, refresh] = usePoll<Connection[]>(() => box.connections(tab === "closed"), 1000, tab !== "activity", [], [tab]);
@@ -38,12 +45,35 @@ export function ConnectionsPage({ snap }: { snap: Snapshot }) {
         `${c.domain} ${c.destination} ${c.source} ${c.chain.join(" ")} ${c.rule} ${c.inbound} ${c.process ?? ""} ${c.protocol ?? ""} ${c.network}`.toLowerCase().includes(q),
       )
     : conns;
+  // The groups, by count, before choosing one narrows the list.
+  const keyOf = groupBy === "process" ? processOf : groupBy === "host" ? hostOf : null;
+  const groups = keyOf ? countBy(list, keyOf) : [];
+  // A group whose connections are all gone, or not in this tab, is let go.
+  const group = chosen !== null && groups.some((g) => g.key === chosen) ? chosen : null;
+  if (keyOf && group !== null) list = list.filter((c) => keyOf(c) === group);
   if (sort === "traffic") list = [...list].sort((a, b) => b.upload + b.download - (a.upload + a.download));
   if (sort === "host") list = [...list].sort((a, b) => (a.domain || a.destination).localeCompare(b.domain || b.destination));
 
   return (
     <>
       <Toolbar tab={tab} setTab={setTab} query={query} setQuery={setQuery}>
+        {tab !== "activity" && (
+          <ToggleGroup.Root
+            className="segmented"
+            type="single"
+            value={groupBy || "none"}
+            onValueChange={(v) => {
+              if (!v) return;
+              setGroupBy(v === "none" ? "" : (v as GroupBy));
+              setGroup(null);
+            }}
+            aria-label="分组"
+          >
+            <ToggleGroup.Item value="none">不分组</ToggleGroup.Item>
+            <ToggleGroup.Item value="process">按客户端</ToggleGroup.Item>
+            <ToggleGroup.Item value="host">按主机</ToggleGroup.Item>
+          </ToggleGroup.Root>
+        )}
         {tab !== "activity" && (
           <ToggleGroup.Root className="segmented" type="single" value={sort} onValueChange={(v) => v && setSort(v as Sort)} aria-label="排序">
             <ToggleGroup.Item value="time">时间</ToggleGroup.Item>
@@ -81,6 +111,18 @@ export function ConnectionsPage({ snap }: { snap: Snapshot }) {
         <ActivityList query={query} />
       ) : (
         <div className="table">
+          {keyOf && (
+            <div className="conn-groups" role="group" aria-label={groupBy === "process" ? "客户端" : "主机"}>
+              <button type="button" className="conn-group" aria-pressed={group === null} onClick={() => setGroup(null)}>
+                全部 <span className="faint">{groups.reduce((n, g) => n + g.count, 0)}</span>
+              </button>
+              {groups.map((g) => (
+                <button type="button" key={g.key} className="conn-group" aria-pressed={group === g.key} onClick={() => setGroup(group === g.key ? null : g.key)} title={g.key}>
+                  <span className="ellipsis">{g.key}</span> <span className="faint">{g.count}</span>
+                </button>
+              ))}
+            </div>
+          )}
           <div className="thead">
             <span>协议</span>
             <span>目标</span>
@@ -92,12 +134,21 @@ export function ConnectionsPage({ snap }: { snap: Snapshot }) {
           </div>
           {list.map((c) => (
             <div className="trow" key={c.id} onClick={() => setDetail(c)} role="button" tabIndex={0} onKeyDown={(e) => e.key === "Enter" && setDetail(c)}>
-              <span className="net">{c.network.toUpperCase()}</span>
+              <span style={{ display: "flex", flexDirection: "column" }}>
+                <span className="net">{c.network.toUpperCase()}</span>
+                <span className="faint" style={{ fontSize: 10.5 }} title="序号">
+                  #{c.seq}
+                </span>
+              </span>
               <span style={{ minWidth: 0, display: "flex", flexDirection: "column" }}>
                 <span className="host" title={c.destination}>
                   {c.domain || c.destination}
                 </span>
-                {c.process && <span className="faint ellipsis" style={{ fontSize: 11 }}>{c.process}</span>}
+                {(c.process || c.protocol) && (
+                  <span className="faint ellipsis" style={{ fontSize: 11 }}>
+                    {[c.process, c.protocol?.toUpperCase()].filter(Boolean).join(" · ")}
+                  </span>
+                )}
               </span>
               <span style={{ minWidth: 0, display: "flex", flexDirection: "column" }}>
                 <Route chain={c.chain} inbound={c.inbound} outbound={c.outbound} />
@@ -105,8 +156,8 @@ export function ConnectionsPage({ snap }: { snap: Snapshot }) {
                   {c.rule}
                 </span>
               </span>
-              <span className="r">{bytes(c.upload)}</span>
-              <span className="r">{bytes(c.download)}</span>
+              <Amount total={c.upload} rate={c.closedAt ? 0 : c.uploadRate} />
+              <Amount total={c.download} rate={c.closedAt ? 0 : c.downloadRate} />
               <span className="r">{c.closedAt ? clock(c.closedAt) : duration(now - new Date(c.createdAt).getTime())}</span>
               {tab === "open" ? (
                 <button
@@ -136,6 +187,23 @@ export function ConnectionsPage({ snap }: { snap: Snapshot }) {
       <ConnectionDetail conn={detail} onClose={() => setDetail(null)} />
     </>
   );
+}
+
+/** A total, with its rate of the last second below while it moves. */
+function Amount({ total, rate: perSecond }: { total: number; rate: number }) {
+  return (
+    <span className="r" style={{ display: "flex", flexDirection: "column" }}>
+      <span>{bytes(total)}</span>
+      {perSecond > 0 && <span className="faint" style={{ fontSize: 10.5 }}>{rate(perSecond)}</span>}
+    </span>
+  );
+}
+
+/** The keys of a list, with how many items each has, most first. */
+function countBy(list: Connection[], key: (c: Connection) => string): { key: string; count: number }[] {
+  const counts = new Map<string, number>();
+  for (const c of list) counts.set(key(c), (counts.get(key(c)) ?? 0) + 1);
+  return [...counts].map(([k, count]) => ({ key: k, count })).sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
 }
 
 function Toolbar({
@@ -250,17 +318,21 @@ function ActivityList({ query }: { query: string }) {
 function ConnectionDetail({ conn, onClose }: { conn: Connection | null; onClose: () => void }) {
   const rows: [string, string | undefined][] = conn
     ? [
+        ["序号", `#${conn.seq}${conn.logId ? ` · 日志编号 ${conn.logId}` : ""}`],
         ["目标", conn.domain ? `${conn.domain}（${conn.destination}）` : conn.destination],
+        ["原始目标", conn.originDestination ? `${conn.originDestination}${conn.fakeIp ? "（FakeIP）" : ""}` : conn.fakeIp ? "FakeIP" : undefined],
+        ["解析地址", conn.addresses.length ? conn.addresses.join("、") : undefined],
         ["来源", conn.source],
         ["进程", conn.processPath ? `${conn.processPath}${conn.processId ? `（PID ${conn.processId}）` : ""}` : undefined],
+        ["经由进程", conn.viaPath],
         ["网络", `${conn.network.toUpperCase()}${conn.ipVersion ? ` · IPv${conn.ipVersion}` : ""}`],
-        ["嗅探协议", conn.protocol],
+        ["嗅探协议", [conn.protocol, conn.client].filter(Boolean).join(" · ") || undefined],
         ["入站", `${conn.inbound}（${conn.inboundType}）`],
         ["用户", conn.user],
         ["规则", conn.rule],
         ["出站", `${conn.chain.join(" → ") || conn.outbound}（${conn.outboundType}）`],
-        ["上传", bytes(conn.upload)],
-        ["下载", bytes(conn.download)],
+        ["上传", `${bytes(conn.upload)}${!conn.closedAt && conn.uploadRate ? ` · ${rate(conn.uploadRate)}` : ""}`],
+        ["下载", `${bytes(conn.download)}${!conn.closedAt && conn.downloadRate ? ` · ${rate(conn.downloadRate)}` : ""}`],
         ["开始", new Date(conn.createdAt).toLocaleString()],
         ["结束", conn.closedAt ? new Date(conn.closedAt).toLocaleString() : "仍在连接"],
       ]

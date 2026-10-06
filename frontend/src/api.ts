@@ -10,6 +10,7 @@ import type {
   ActivityKind,
   CheckResult,
   Connection,
+  DNSResult,
   ImportResult,
   LegacyData,
   LogLine,
@@ -169,8 +170,8 @@ function makePreview() {
   const closed: Connection[] = [];
 
   const bump = () => logs.emit(++version);
-  const addLog = (level: string, message: string) => {
-    logLines.push({ time: iso(Date.now()), level, message });
+  const addLog = (level: string, message: string, source: "core" | "app" = "core") => {
+    logLines.push({ time: iso(Date.now()), level, source, message });
     if (logLines.length > 2000) logLines.splice(0, 200);
     bump();
   };
@@ -223,6 +224,10 @@ function makePreview() {
   const hosts = ["www.google.com", "github.com", "api.openai.com", "i.ytimg.com", "1.1.1.1", "registry.npmjs.org", "fonts.gstatic.com"];
   const connection = (i: number, now: number, closedAt?: number): Connection => ({
     id: String(i),
+    seq: i + 1,
+    logId: 1_000_000 + i * 7919,
+    client: i % 2 ? "safari" : undefined,
+    addresses: i % 5 === 4 ? [] : [`142.250.${i}.${100 + i}`],
     inbound: "mixed-in",
     inboundType: "mixed",
     network: i % 5 === 4 ? "udp" : "tcp",
@@ -239,6 +244,8 @@ function makePreview() {
     chain: i % 5 === 4 ? ["direct"] : ["proxy", groups[0].selected],
     upload: 2_000 * (i + 3) * (1 + Math.sin(now / 9e3)),
     download: 90_000 * (i + 1) * (2 + Math.sin(now / 7e3)),
+    uploadRate: closedAt ? 0 : Math.round(300 * (i + 1) * (1 + Math.sin(now / 3e3 + i))),
+    downloadRate: closedAt ? 0 : Math.round(12_000 * (i + 1) * (1 + Math.sin(now / 2e3 + i))),
     createdAt: iso(now - (i * 47 + 5) * 1000),
     closedAt: closedAt ? iso(closedAt) : undefined,
   });
@@ -253,6 +260,12 @@ function makePreview() {
     downHist = [...downHist, d].slice(-60);
     upHist = [...upHist, u].slice(-60);
     if (Math.random() < 0.5) addActivity("dns", "dns", `exchanged ${hosts[Math.floor(Math.random() * hosts.length)]}. IN A 300s`);
+    if (Math.random() < 0.4) {
+      const i = Math.floor(Math.random() * hosts.length);
+      const id = 1_000_000 + i * 7919;
+      addLog("info", `[${id} 0ms] inbound/mixed[mixed-in]: inbound connection to ${hosts[i]}:443`);
+      addLog("info", `[${id} 2ms] outbound/vless[${groups[0].selected}]: outbound connection to ${hosts[i]}:443`);
+    }
     if (Math.random() < 0.15) closed.unshift(connection(closed.length + 20, Date.now(), Date.now()));
     state.emit(snapshot());
   }, 1000);
@@ -272,6 +285,9 @@ function makePreview() {
       startedAt = Date.now();
       addLog("info", "inbound/mixed[mixed-in]: tcp server started at 127.0.0.1:2080");
       addLog("info", "sing-box started (0.31s)");
+      addLog("info", `已启动配置“${profiles.active}”`, "app");
+      addLog("warn", "配置用了废弃的写法：legacy DNS server format is deprecated in sing-box 1.12.0", "app");
+      if (systemProxy) addLog("info", "系统代理已指向 127.0.0.1:2080", "app");
       addActivity("urltest", "outbound/urltest[auto]", "outbound 香港 01 available: 46ms");
       addActivity("rule-set", "router", "updated rule-set geosite-cn");
       state.emit(snapshot());
@@ -284,7 +300,8 @@ function makePreview() {
       up = down = 0;
       upHist = [];
       downHist = [];
-      addLog("info", "sing-box 已停止");
+      if (systemProxy) addLog("info", "系统代理已恢复为原来的设置", "app");
+      addLog("info", "内核已停止", "app");
       state.emit(snapshot());
     },
     async reload() {
@@ -346,10 +363,21 @@ function makePreview() {
     },
     async clearDNSCache() {},
     async resetFakeIP() {},
-    async logs(level: string, query: string, limit: number) {
+    async queryDNS(name: string, qtype: string): Promise<DNSResult> {
+      if (status !== "running") throw new Error("内核没有运行");
+      await wait(120);
+      const n = name.trim().replace(/\.$/, "");
+      if (!n) throw new Error("填写要查询的域名");
+      const type = (qtype || "A").toUpperCase();
+      const data = type === "AAAA" ? "2606:4700::6810:84e5" : type === "CNAME" ? `edge.${n}` : "104.16.132.229";
+      return { rcode: "NOERROR", answers: [{ name: n, type, ttl: 300, data }], took: 23 };
+    },
+    async logs(level: string, source: string, query: string, limit: number) {
       const rank: Record<string, number> = { error: 2, warn: 3, info: 4, debug: 5, trace: 6 };
       const max = level === "all" ? 9 : (rank[level] ?? 4);
-      return logLines.filter((l) => (rank[l.level] ?? 4) <= max && l.message.toLowerCase().includes(query.toLowerCase())).slice(-limit);
+      return logLines
+        .filter((l) => (rank[l.level] ?? 4) <= max && (!source || l.source === source) && l.message.toLowerCase().includes(query.toLowerCase()))
+        .slice(-limit);
     },
     async clearLogs() {
       logLines.length = 0;
@@ -479,6 +507,7 @@ function makePreview() {
         platform: "darwin/arm64",
         mygo: "0.2.12",
         tags: ["quic", "utls", "wireguard", "tailscale", "clash_api"],
+        missing: ["outbounds/naive", "services/ccm", "services/usbip-client", "services/usbip-server"],
         dataDir: "~/Library/Application Support/Boxcar",
       };
     },

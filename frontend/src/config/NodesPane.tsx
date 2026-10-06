@@ -9,6 +9,7 @@ import { DeleteDialog, EditDialog, Empty, ItemMenu, More, PaneHead, Row, ToggleC
 import { FormContext, ObjectFields } from "./SchemaForm";
 import { def, objectShape } from "./schema";
 import { sectionContexts, fieldDoc, fieldLabel } from "./docs";
+import { missingNote, useMissingTypes } from "./build";
 import { addItem, builtinTypes, duplicateItem, isGroup, itemsOf, kindsOf, removeItem, replaceItem, uniqueTag } from "./ops";
 import { parseShareText } from "./share";
 import { tagsOfItem } from "./refs";
@@ -208,6 +209,7 @@ function NodeDialog({ config, target, onClose, onSave }: { config: Json; target:
   const [section, setSection] = useState<"outbounds" | "endpoints">(target?.section ?? "outbounds");
   const [join, setJoin] = useState<string[]>(() => defaultGroups(config));
   const [error, setError] = useState("");
+  const missing = useMissingTypes();
   const groups = itemsOf(config, ["outbounds"]).filter(isGroup);
 
   const choose = (type: string, sec: "outbounds" | "endpoints" = "outbounds") => {
@@ -222,14 +224,17 @@ function NodeDialog({ config, target, onClose, onSave }: { config: Json; target:
     return (
       <EditDialog open onOpenChange={(o) => !o && onClose()} title="添加节点" description="选择节点的协议，可以在机场或服务器的说明里找到。" onSubmit={() => {}} submit={null} wide>
         <div className="protocols">
-          {protocols.map((p) => (
-            <button type="button" key={p.type} className="protocol" onClick={() => choose(p.type, p.section ?? "outbounds")}>
-              <b>{p.name}</b>
-              <span className="mono">{p.type}</span>
-            </button>
-          ))}
+          {protocols.map((p) => {
+            const left = missing.has(`${p.section ?? "outbounds"}/${p.type}`);
+            return (
+              <button type="button" key={p.type} className="protocol" disabled={left} title={left ? missingNote : undefined} onClick={() => choose(p.type, p.section ?? "outbounds")}>
+                <b>{p.name}</b>
+                <span className="mono">{left ? missingNote : p.type}</span>
+              </button>
+            );
+          })}
         </div>
-        <OtherTypes onChoose={(t) => choose(t)} />
+        <OtherTypes onChoose={(t) => choose(t)} missing={missing} />
       </EditDialog>
     );
   }
@@ -324,7 +329,7 @@ function NodeDialog({ config, target, onClose, onSave }: { config: Json; target:
 }
 
 /** The other types of outbounds, for those not offered first. */
-function OtherTypes({ onChoose }: { onChoose: (type: string) => void }) {
+function OtherTypes({ onChoose, missing }: { onChoose: (type: string) => void; missing: Set<string> }) {
   const types = useMemo(() => {
     const disc = objectShape(def("Outbound"), {}).discriminators[0];
     const shown = new Set(protocols.map((p) => p.type));
@@ -336,8 +341,9 @@ function OtherTypes({ onChoose }: { onChoose: (type: string) => void }) {
       <select className="select" value="" onChange={(e) => e.target.value && onChoose(e.target.value)}>
         <option value="">选择…</option>
         {types.map((t) => (
-          <option key={t} value={t}>
+          <option key={t} value={t} disabled={missing.has(`outbounds/${t}`)}>
             {t}
+            {missing.has(`outbounds/${t}`) ? `（${missingNote}）` : ""}
           </option>
         ))}
       </select>
@@ -349,6 +355,7 @@ function ImportDialog({ open, onOpenChange, config, onChange }: { open: boolean;
   const [text, setText] = useState("");
   const [join, setJoin] = useState<string[]>([]);
   const results = useMemo(() => parseShareText(text), [text]);
+  const missing = useMissingTypes();
   const ok = results.filter((r) => r.ok);
   const groups = itemsOf(config, ["outbounds"]).filter(isGroup);
   // Opened afresh each time, joining the default route's group.
@@ -390,6 +397,7 @@ function ImportDialog({ open, onOpenChange, config, onChange }: { open: boolean;
               {r.ok ? (
                 <>
                   <b className="ellipsis">{r.outbound.tag}</b>
+                  {missing.has(`outbounds/${r.outbound.type}`) && <span className="danger-text">{missingNote}，导入后无法使用</span>}
                   <span className="faint ellipsis">
                     {r.outbound.type}{r.outbound.server ? ` · ${r.outbound.server}${r.outbound.server_port ? `:${r.outbound.server_port}` : ""}` : ""}
                   </span>

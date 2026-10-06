@@ -6,10 +6,10 @@ import (
 	stdjson "encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/netip"
 	"os"
 	"runtime"
-	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -90,16 +90,19 @@ type Snapshot struct {
 	Mode  ModeState `json:"mode"`
 	// Warnings are the deprecated parts of the configuration running.
 	Warnings []Warning `json:"warnings"`
-	// LogLevel is the level the configuration running logs at.
+	// LogLevel is the level the configuration running logs at, or
+	// "disabled" when it turns the log off.
 	LogLevel    string           `json:"logLevel,omitempty"`
 	SystemProxy SystemProxyState `json:"systemProxy"`
 }
 
-// LogLine is a line of the core's log.
+// LogLine is a line of the log: of the core, or of the app around it.
 type LogLine struct {
-	Time    time.Time `json:"time"`
-	Level   string    `json:"level"`
-	Message string    `json:"message"`
+	Time  time.Time `json:"time"`
+	Level string    `json:"level"`
+	// Source is "core" or "app".
+	Source  string `json:"source"`
+	Message string `json:"message"`
 }
 
 // Profile is a configuration file.
@@ -153,7 +156,10 @@ type About struct {
 	Platform string   `json:"platform"`
 	MyGo     string   `json:"mygo"`
 	Tags     []string `json:"tags"`
-	DataDir  string   `json:"dataDir"`
+	// Missing are the types this build leaves out, as "outbounds/naive":
+	// a configuration using them fails to check or start.
+	Missing []string `json:"missing"`
+	DataDir string   `json:"dataDir"`
 }
 
 // StateChanged carries the state of the core to the page.
@@ -209,6 +215,12 @@ func (b *Box) changed() {
 	case b.notify <- struct{}{}:
 	default:
 	}
+}
+
+// note logs what the app did around the core, as the log page shows it
+// beside the core's lines.
+func (b *Box) note(level log.Level, format string, args ...any) {
+	b.core.Logs().add(level, fmt.Sprintf(format, args...))
 }
 
 // logged says the log has new lines, without recomputing the state.
@@ -505,6 +517,10 @@ func (b *Box) startLocked() error {
 	if err := b.core.Start(name, content); err != nil {
 		return err
 	}
+	b.note(log.LevelInfo, "已启动配置“%s”", name)
+	for _, w := range b.core.Warnings() {
+		b.note(log.LevelWarn, "配置用了废弃的写法：%s", w.Message)
+	}
 	if b.store.settings().SystemProxy {
 		if err := b.applyProxyLocked(); err != nil {
 			return fmt.Errorf("内核已启动，但没能设置系统代理：%w", err)
@@ -521,7 +537,7 @@ func (b *Box) Stop() error {
 }
 
 func (b *Box) stopLocked() error {
-	proxyErr := b.proxy.disable()
+	proxyErr := b.disableProxyLocked()
 	b.proxyError = ""
 	err := b.core.Stop()
 	b.changed()
@@ -537,6 +553,7 @@ func (b *Box) Reload() error {
 	if b.core.Status() != statusRunning {
 		return errNotRunning
 	}
+	b.note(log.LevelInfo, "重新载入配置“%s”", b.core.Profile())
 	if err := b.stopLocked(); err != nil {
 		return err
 	}
@@ -560,7 +577,7 @@ func (b *Box) SetSystemProxy(on bool) error {
 	defer b.changed()
 	if !on {
 		b.proxyError = ""
-		return b.proxy.disable()
+		return b.disableProxyLocked()
 	}
 	if b.core.Status() != statusRunning {
 		return nil
@@ -580,6 +597,7 @@ func (b *Box) applyProxyLocked() error {
 	}
 	if target == nil {
 		b.proxyError = "配置里没有 mixed 或 http 入站，无法设置系统代理"
+		b.note(log.LevelError, "%s", b.proxyError)
 		return errors.New(b.proxyError)
 	}
 	host := target.listen
@@ -588,10 +606,26 @@ func (b *Box) applyProxyLocked() error {
 	}
 	if err := b.proxy.enable(host, target.port, target.typ == C.TypeMixed); err != nil {
 		b.proxyError = err.Error()
+		b.note(log.LevelError, "没能设置系统代理：%v", err)
 		return err
 	}
 	b.proxyError = ""
+	b.note(log.LevelInfo, "系统代理已指向 %s", net.JoinHostPort(host, strconv.Itoa(target.port)))
 	return nil
+}
+
+// disableProxyLocked puts the system proxy back as it was, when the app
+// had set it.
+func (b *Box) disableProxyLocked() error {
+	was, _ := b.proxy.active()
+	err := b.proxy.disable()
+	switch {
+	case err != nil:
+		b.note(log.LevelError, "没能恢复系统代理：%v", err)
+	case was:
+		b.note(log.LevelInfo, "系统代理已恢复为原来的设置")
+	}
+	return err
 }
 
 // CurrentSystemProxy describes the system's HTTP proxy now, as set by
@@ -674,9 +708,16 @@ func (b *Box) ClearDNSCache() { b.core.ClearDNSCache() }
 // ResetFakeIP forgets the fake IP addresses given out.
 func (b *Box) ResetFakeIP() error { return b.core.ResetFakeIP() }
 
+// QueryDNS looks a name up through the running core's DNS, as its DNS
+// rules route it: the query goes out for real, as the user asked.
+func (b *Box) QueryDNS(name, qtype string) (DNSResult, error) {
+	return b.core.QueryDNS(name, qtype)
+}
+
 // Logs returns the last lines of the log, at most limit, at or above a
-// level ("error", "warn", "info", "debug" or "all") that contain query.
-func (b *Box) Logs(level, query string, limit int) []LogLine {
+// level ("error", "warn", "info", "debug" or "all"), of a source ("core",
+// "app", or "" for both), that contain query.
+func (b *Box) Logs(level, source, query string, limit int) []LogLine {
 	lvl := log.LevelInfo
 	switch level {
 	case "error":
@@ -688,13 +729,13 @@ func (b *Box) Logs(level, query string, limit int) []LogLine {
 	case "all":
 		lvl = log.LevelTrace
 	}
-	entries, _ := b.core.Logs().snapshot(lvl, query)
+	entries, _ := b.core.Logs().snapshot(lvl, source, query)
 	if limit > 0 && len(entries) > limit {
 		entries = entries[len(entries)-limit:]
 	}
 	lines := make([]LogLine, len(entries))
 	for i, e := range entries {
-		lines[i] = LogLine{Time: e.Time.Truncate(time.Millisecond), Level: log.FormatLevel(e.Level), Message: e.Message}
+		lines[i] = LogLine{Time: e.Time.Truncate(time.Millisecond), Level: log.FormatLevel(e.Level), Source: e.Source, Message: e.Message}
 	}
 	return lines
 }
@@ -706,7 +747,7 @@ func (b *Box) ClearLogs() {
 }
 
 // ExportLogs asks where to save the log, and saves it there.
-func (b *Box) ExportLogs(ctx context.Context, level, query string) (string, error) {
+func (b *Box) ExportLogs(ctx context.Context, level, source, query string) (string, error) {
 	path, err := mygo.Dialog.Save(mygo.SaveDialogOptions{
 		Parent:      mygo.CallerWindow(ctx),
 		Title:       "导出日志",
@@ -715,10 +756,14 @@ func (b *Box) ExportLogs(ctx context.Context, level, query string) (string, erro
 	if err != nil || path == "" {
 		return "", err
 	}
-	lines := b.Logs(level, query, 0)
+	lines := b.Logs(level, source, query, 0)
 	var buf bytes.Buffer
 	for _, l := range lines {
-		fmt.Fprintf(&buf, "%s %s %s\n", l.Time.Format("2006-01-02 15:04:05.000"), strings.ToUpper(l.Level), l.Message)
+		from := "core"
+		if l.Source == sourceApp {
+			from = "app "
+		}
+		fmt.Fprintf(&buf, "%s %s %s %s\n", l.Time.Format("2006-01-02 15:04:05.000"), from, strings.ToUpper(l.Level), l.Message)
 	}
 	return path, os.WriteFile(path, buf.Bytes(), 0o644)
 }
@@ -743,6 +788,11 @@ func (b *Box) ReadProfile(name string) (string, error) {
 // SaveProfile writes the text of a profile.
 func (b *Box) SaveProfile(name, content string) error {
 	err := b.store.write(name, []byte(content))
+	if err != nil {
+		b.note(log.LevelError, "保存配置“%s”失败：%v", name, err)
+	} else {
+		b.note(log.LevelInfo, "已保存配置“%s”", name)
+	}
 	b.changed()
 	return err
 }
@@ -795,7 +845,11 @@ func (b *Box) FormatProfile(content string) (string, error) {
 
 // NewProfile creates a profile from the sample and returns its name.
 func (b *Box) NewProfile() (string, error) {
-	return b.store.create("新配置", []byte(sampleProfile))
+	name, err := b.store.create("新配置", []byte(sampleProfile))
+	if err == nil {
+		b.note(log.LevelInfo, "新建配置“%s”", name)
+	}
+	return name, err
 }
 
 // ImportProfiles asks for configuration files and copies them in.
@@ -819,9 +873,11 @@ func (b *Box) ImportFiles(paths []string) ImportResult {
 		name, err := b.store.importFile(path)
 		if err != nil {
 			r.Failed = append(r.Failed, path+"："+err.Error())
+			b.note(log.LevelError, "导入 %s 失败：%v", abbreviateHome(path), err)
 			continue
 		}
 		r.Names = append(r.Names, name)
+		b.note(log.LevelInfo, "从 %s 导入配置“%s”", abbreviateHome(path), name)
 	}
 	if b.store.settings().Active == "" && len(r.Names) > 0 {
 		b.SetActive(r.Names[0])
@@ -835,11 +891,14 @@ func (b *Box) AddRemoteProfile(name, link string, autoUpdate bool, interval int)
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	content, err := fetchProfile(ctx, link)
-	if err != nil {
-		return "", err
+	if err == nil {
+		if _, checkErr := checkConfig(content); checkErr != nil {
+			err = fmt.Errorf("下载的内容不是可用的 sing-box 配置：%w", checkErr)
+		}
 	}
-	if _, err := checkConfig(content); err != nil {
-		return "", fmt.Errorf("下载的内容不是可用的 sing-box 配置：%w", err)
+	if err != nil {
+		b.note(log.LevelError, "添加订阅失败：%v", err)
+		return "", err
 	}
 	if strings.TrimSpace(name) == "" {
 		name = "订阅"
@@ -849,6 +908,7 @@ func (b *Box) AddRemoteProfile(name, link string, autoUpdate bool, interval int)
 		return "", err
 	}
 	b.store.setRemote(created, &Remote{URL: strings.TrimSpace(link), AutoUpdate: autoUpdate, Interval: interval, UpdatedAt: time.Now().Truncate(time.Second)})
+	b.note(log.LevelInfo, "已添加订阅“%s”", created)
 	if b.store.settings().Active == "" {
 		b.SetActive(created)
 	}
@@ -903,6 +963,7 @@ func (b *Box) UpdateProfile(name string) error {
 		r.Error = err.Error()
 		b.store.setRemote(name, r)
 		b.profilesChanged()
+		b.note(log.LevelWarn, "更新订阅“%s”失败：%v", name, err)
 		return err
 	}
 	old, _ := b.store.read(name)
@@ -912,6 +973,11 @@ func (b *Box) UpdateProfile(name string) error {
 	r.UpdatedAt, r.Error = time.Now().Truncate(time.Second), ""
 	b.store.setRemote(name, r)
 	b.profilesChanged()
+	if bytes.Equal(old, content) {
+		b.note(log.LevelInfo, "订阅“%s”已是最新", name)
+	} else {
+		b.note(log.LevelInfo, "订阅“%s”已更新", name)
+	}
 	if !bytes.Equal(old, content) && b.core.Status() == statusRunning && b.core.Profile() == name && b.store.settings().Active == name {
 		return b.Reload()
 	}
@@ -930,9 +996,8 @@ func (b *Box) updateDue() {
 		if time.Since(r.UpdatedAt) < time.Duration(r.Interval)*time.Minute {
 			continue
 		}
-		if err := b.UpdateProfile(name); err != nil {
-			b.core.Logs().add(log.LevelWarn, "更新订阅“"+name+"”失败："+err.Error())
-		}
+		// UpdateProfile logs how it went.
+		b.UpdateProfile(name)
 	}
 }
 
@@ -955,6 +1020,9 @@ func (b *Box) profilesChanged() {
 // RenameProfile renames a profile.
 func (b *Box) RenameProfile(from, to string) error {
 	err := b.store.rename(from, strings.TrimSpace(to))
+	if err == nil {
+		b.note(log.LevelInfo, "配置“%s”改名为“%s”", from, strings.TrimSpace(to))
+	}
 	b.changed()
 	return err
 }
@@ -962,6 +1030,9 @@ func (b *Box) RenameProfile(from, to string) error {
 // DeleteProfile moves a profile to the Trash.
 func (b *Box) DeleteProfile(name string) error {
 	err := b.store.remove(name)
+	if err == nil {
+		b.note(log.LevelInfo, "配置“%s”已移到废纸篓", name)
+	}
 	b.changed()
 	return err
 }
@@ -1003,18 +1074,13 @@ func (b *Box) SetLoginItem(open bool) error { return mygo.App.SetOpenAtLogin(ope
 // About describes the build.
 func (b *Box) About() About {
 	a := About{App: appVersion(), Version: C.Version, Go: runtime.Version(), Platform: runtime.GOOS + "/" + runtime.GOARCH, MyGo: mygo.Version, Tags: []string{}, DataDir: abbreviateHome(b.store.dir)}
-	if info, ok := debug.ReadBuildInfo(); ok {
-		for _, s := range info.Settings {
-			if s.Key != "-tags" {
-				continue
-			}
-			for _, tag := range strings.Split(s.Value, ",") {
-				if v, ok := strings.CutPrefix(tag, "with_"); ok {
-					a.Tags = append(a.Tags, v)
-				}
-			}
+	tags, cgo := buildTags()
+	for _, tag := range tags {
+		if v, ok := strings.CutPrefix(tag, "with_"); ok {
+			a.Tags = append(a.Tags, v)
 		}
 	}
+	a.Missing = missingTypes(tags, cgo)
 	return a
 }
 

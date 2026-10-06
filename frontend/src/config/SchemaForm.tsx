@@ -22,6 +22,7 @@ import { childContexts, fieldDoc, fieldLabel, groupNames, sectionContexts, type 
 import { discriminatorNames, variantLabel } from "./labels";
 import { refsTo, renameRefs, tagKindNames, tagsOf, tagsOfItem, type TagKind } from "./refs";
 import { kindsOf, removeItem } from "./ops";
+import { missingNote, useMissingTypes } from "./build";
 import { DeleteDialog } from "./common";
 import { isObject, pathText, type Json, type Path } from "./path";
 
@@ -675,6 +676,7 @@ export function ObjectList({ items, value, onChange, contexts, path, section, ru
   const env = useContext(FormContext);
   const kinds = section ? kindsOf(section.split(".")) : [];
   const [deleting, setDeleting] = useState<number | null>(null);
+  const missing = useMissingTypes();
   const remove = (i: number) => {
     const tag = tagsOfItem(list[i], i)[0];
     if (env.update && kinds.some((k) => refsTo(env.config, k, tag).length)) return setDeleting(i);
@@ -754,11 +756,15 @@ export function ObjectList({ items, value, onChange, contexts, path, section, ru
           </DropdownMenu.Trigger>
           <DropdownMenu.Portal>
             <DropdownMenu.Content className="menu scroll" align="start" sideOffset={4}>
-              {variants.map((v) => (
-                <DropdownMenu.Item key={JSON.stringify(v.value)} className="menu-item" onSelect={() => add(v.value)}>
-                  {variantLabel(disc.key, v.value, ruleKind)}
-                </DropdownMenu.Item>
-              ))}
+              {variants.map((v) => {
+                const left = disc.key === "type" && missing.has(`${section}/${v.value}`);
+                return (
+                  <DropdownMenu.Item key={JSON.stringify(v.value)} className="menu-item" disabled={left} onSelect={() => add(v.value)}>
+                    {variantLabel(disc.key, v.value, ruleKind)}
+                    {left && <span className="faint">（{missingNote}）</span>}
+                  </DropdownMenu.Item>
+                );
+              })}
             </DropdownMenu.Content>
           </DropdownMenu.Portal>
         </DropdownMenu.Root>
