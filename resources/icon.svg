@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3b82f6"/>
+      <stop offset="1" stop-color="#4338ca"/>
+    </linearGradient>
+    <linearGradient id="shine" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.32"/>
+      <stop offset="0.55" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="top" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#dbeafe"/>
+    </linearGradient>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="186" fill="url(#bg)"/>
+  <rect x="100" y="100" width="824" height="824" rx="186" fill="url(#shine)"/>
+  <rect x="102" y="102" width="820" height="820" rx="184" fill="none" stroke="#ffffff" stroke-opacity="0.22" stroke-width="4"/>
+  <g stroke-linejoin="round" stroke-linecap="round">
+    <path d="M512 262 L742 388 L512 514 L282 388 Z" fill="url(#top)"/>
+    <path d="M282 388 L512 514 L512 772 L282 646 Z" fill="#ffffff" fill-opacity="0.78"/>
+    <path d="M742 388 L512 514 L512 772 L742 646 Z" fill="#ffffff" fill-opacity="0.56"/>
+    <path d="M512 262 L742 388 L742 646 L512 772 L282 646 L282 388 Z M282 388 L512 514 L742 388 M512 514 L512 772" fill="none" stroke="#ffffff" stroke-width="22"/>
+  </g>
+</svg>

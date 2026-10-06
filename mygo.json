@@ -1,0 +1,12 @@
+{
+  "name": "Boxcar",
+  "identifier": "io.github.maybe404.boxcar",
+  "version": "0.3.0",
+  "copyright": "© 2026 Maybe404 · GPL-3.0-or-later",
+  "devUrl": "http://localhost:5173",
+  "devCommand": "bun run --cwd frontend dev",
+  "buildCommand": "bun run --cwd frontend build",
+  "frontendDist": "frontend/dist",
+  "bindings": "frontend/src/mygo.ts",
+  "out": "build"
+}

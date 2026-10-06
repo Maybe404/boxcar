@@ -1,3 +1,8 @@
 .DS_Store
 .env
 .claude/settings.local.json
+/build/
+/.mygo/
+/version_gen.go
+/.impeccable/*
+!/.impeccable/surfaces/
