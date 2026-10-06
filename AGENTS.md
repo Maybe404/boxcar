@@ -54,7 +54,9 @@
 - Go（`package main`）：
   - `core.go`：内核的启停、统计、策略组、模式、测速
   - `api.go`：绑定给前端的 `Box` 服务
-  - `history.go`：连接记录（同步追踪器）
+  - `history.go`：连接记录（同步追踪器，含 TUN 预匹配的 flow）
+  - `dnslog.go`：从内核日志整理 DNS 查询，按日志编号保存每个连接的日志（依赖内核日志文案，`dnslog_test.go` 用内核自己的 DNS 客户端产生日志来守住）
+  - `icons.go`：进程所在 App 的图标（`plutil`、`sips`、AppKit 的 NSWorkspace，只读）
   - `activity.go`：从日志提取的内核自身活动
   - `sysproxy.go`：可恢复的系统代理
   - `subscription.go`：远程订阅

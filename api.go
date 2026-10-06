@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -205,6 +206,8 @@ type Box struct {
 	updateMu   sync.Mutex
 	updatingMu sync.Mutex
 	updating   map[string]bool
+	// icons are the apps' icons the connections show.
+	icons *iconCache
 	// writes serializes a save from the page with a subscription update
 	// merging into the same profile, so that neither is lost.
 	writes sync.Mutex
@@ -217,6 +220,7 @@ func newBox(core Core, st *store, proxy *systemProxy) *Box {
 		core: core, store: st, proxy: proxy,
 		notify: make(chan struct{}, 1), logNotify: make(chan struct{}, 1),
 		updating: map[string]bool{},
+		icons:    newIconCache(filepath.Join(st.dir, "icons")),
 	}
 }
 
@@ -576,7 +580,7 @@ func (b *Box) Reload() error {
 func (b *Box) shutdown() {
 	b.ops.Lock()
 	defer b.ops.Unlock()
-	b.proxy.disable()
+	b.disableProxyLocked()
 	b.core.Shutdown()
 }
 
@@ -751,6 +755,36 @@ func (b *Box) Logs(level, source, query string, limit int) []LogLine {
 	}
 	return lines
 }
+
+// DNSRecords returns the DNS queries the core answered, newest first,
+// that contain query, at most limit.
+func (b *Box) DNSRecords(query string, limit int) []DNSRecord {
+	if limit <= 0 {
+		limit = dnsRecordLimit
+	}
+	return b.core.Logs().dns.list(query, limit)
+}
+
+// ClearDNSRecords forgets the DNS queries recorded.
+func (b *Box) ClearDNSRecords() {
+	b.core.Logs().dns.clear()
+	b.logged()
+}
+
+// ConnectionLogs returns the core's lines of one connection, by the ID
+// they carry, at every level, oldest first.
+func (b *Box) ConnectionLogs(logID uint32) []LogLine {
+	entries := b.core.Logs().conns.get(logID)
+	lines := make([]LogLine, len(entries))
+	for i, e := range entries {
+		lines[i] = LogLine{Time: e.Time.Truncate(time.Millisecond), Level: log.FormatLevel(e.Level), Source: e.Source, Message: e.Message}
+	}
+	return lines
+}
+
+// ProcessIcon returns the icon of the app a program's path is in, as a
+// data URL of a PNG, or "" for a program without one.
+func (b *Box) ProcessIcon(path string) string { return b.icons.icon(path) }
 
 // ClearLogs empties the log.
 func (b *Box) ClearLogs() {

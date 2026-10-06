@@ -5,13 +5,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { Dialog, ToggleGroup } from "radix-ui";
 import { Search, X } from "lucide-react";
-import { box, events, type Activity, type ActivityKind, type Connection, type Snapshot } from "../api";
+import { toast } from "sonner";
+import { box, errorText, events, type Activity, type ActivityKind, type Connection, type DNSRecord, type LogLine, type Snapshot } from "../api";
+import { DNSQuery } from "../components/DNSQuery";
+import { ProcessIcon } from "../components/ProcessIcon";
 import { bytes, clock, duration, rate } from "../format";
 import { useNow, usePoll } from "../hooks";
 import { Route } from "../components/Route";
 import { Stopped } from "../components/Stopped";
 
-type Tab = "open" | "closed" | "activity";
+type Tab = "open" | "closed" | "dns" | "activity";
 type Sort = "time" | "traffic" | "host";
 /** How the list is split: by the program that made the connection, or by where it went. */
 type GroupBy = "" | "process" | "host";
@@ -27,8 +30,9 @@ export function ConnectionsPage({ snap }: { snap: Snapshot }) {
   const [groupBy, setGroupBy] = useState<GroupBy>("");
   const [chosen, setGroup] = useState<string | null>(null);
   const [detail, setDetail] = useState<Connection | null>(null);
-  const now = useNow(tab !== "activity");
-  const [conns, refresh] = usePoll<Connection[]>(() => box.connections(tab === "closed"), 1000, tab !== "activity", [], [tab]);
+  const listing = tab === "open" || tab === "closed";
+  const now = useNow(listing);
+  const [conns, refresh] = usePoll<Connection[]>(() => box.connections(tab === "closed"), 1000, listing, [], [tab]);
 
   if (!running && tab === "open") {
     return (
@@ -57,7 +61,7 @@ export function ConnectionsPage({ snap }: { snap: Snapshot }) {
   return (
     <>
       <Toolbar tab={tab} setTab={setTab} query={query} setQuery={setQuery}>
-        {tab !== "activity" && (
+        {listing && (
           <ToggleGroup.Root
             className="segmented"
             type="single"
@@ -74,7 +78,7 @@ export function ConnectionsPage({ snap }: { snap: Snapshot }) {
             <ToggleGroup.Item value="host">按主机</ToggleGroup.Item>
           </ToggleGroup.Root>
         )}
-        {tab !== "activity" && (
+        {listing && (
           <ToggleGroup.Root className="segmented" type="single" value={sort} onValueChange={(v) => v && setSort(v as Sort)} aria-label="排序">
             <ToggleGroup.Item value="time">时间</ToggleGroup.Item>
             <ToggleGroup.Item value="traffic">流量</ToggleGroup.Item>
@@ -109,6 +113,8 @@ export function ConnectionsPage({ snap }: { snap: Snapshot }) {
 
       {tab === "activity" ? (
         <ActivityList query={query} />
+      ) : tab === "dns" ? (
+        <DNSList query={query} running={running} />
       ) : (
         <div className="table">
           {keyOf && (
@@ -118,6 +124,7 @@ export function ConnectionsPage({ snap }: { snap: Snapshot }) {
               </button>
               {groups.map((g) => (
                 <button type="button" key={g.key} className="conn-group" aria-pressed={group === g.key} onClick={() => setGroup(group === g.key ? null : g.key)} title={g.key}>
+                  {groupBy === "process" && <ProcessIcon path={g.path} />}
                   <span className="ellipsis">{g.key}</span> <span className="faint">{g.count}</span>
                 </button>
               ))}
@@ -133,7 +140,7 @@ export function ConnectionsPage({ snap }: { snap: Snapshot }) {
             <span />
           </div>
           {list.map((c) => (
-            <div className="trow" key={c.id} onClick={() => setDetail(c)} role="button" tabIndex={0} onKeyDown={(e) => e.key === "Enter" && setDetail(c)}>
+            <div className={`trow${c.error ? " failed" : ""}`} key={c.id} onClick={() => setDetail(c)} role="button" tabIndex={0} onKeyDown={(e) => e.key === "Enter" && setDetail(c)}>
               <span style={{ display: "flex", flexDirection: "column" }}>
                 <span className="net">{c.network.toUpperCase()}</span>
                 <span className="faint" style={{ fontSize: 10.5 }} title="序号">
@@ -144,9 +151,11 @@ export function ConnectionsPage({ snap }: { snap: Snapshot }) {
                 <span className="host" title={c.destination}>
                   {c.domain || c.destination}
                 </span>
-                {(c.process || c.protocol) && (
-                  <span className="faint ellipsis" style={{ fontSize: 11 }}>
-                    {[c.process, c.protocol?.toUpperCase()].filter(Boolean).join(" · ")}
+                {(c.process || c.protocol || c.error) && (
+                  <span className="faint ellipsis proc" style={{ fontSize: 11 }}>
+                    <ProcessIcon path={c.processPath} size={12} />
+                    {c.error && <span className="danger-text" style={{ marginRight: 4 }}>失败 ·</span>}
+                    {[c.process, c.protocol?.toUpperCase(), c.flow ? "TUN 预匹配" : ""].filter(Boolean).join(" · ")}
                   </span>
                 )}
               </span>
@@ -199,11 +208,15 @@ function Amount({ total, rate: perSecond }: { total: number; rate: number }) {
   );
 }
 
-/** The keys of a list, with how many items each has, most first. */
-function countBy(list: Connection[], key: (c: Connection) => string): { key: string; count: number }[] {
-  const counts = new Map<string, number>();
-  for (const c of list) counts.set(key(c), (counts.get(key(c)) ?? 0) + 1);
-  return [...counts].map(([k, count]) => ({ key: k, count })).sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
+/** The keys of a list, with how many items each has, most first, and a program's path for its icon. */
+function countBy(list: Connection[], key: (c: Connection) => string): { key: string; count: number; path?: string }[] {
+  const counts = new Map<string, { count: number; path?: string }>();
+  for (const c of list) {
+    const g = counts.get(key(c)) ?? { count: 0, path: c.processPath };
+    g.count++;
+    counts.set(key(c), g);
+  }
+  return [...counts].map(([k, g]) => ({ key: k, ...g })).sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
 }
 
 function Toolbar({
@@ -224,6 +237,7 @@ function Toolbar({
       <ToggleGroup.Root className="segmented" type="single" value={tab} onValueChange={(v) => v && setTab(v as Tab)} aria-label="连接">
         <ToggleGroup.Item value="open">活动</ToggleGroup.Item>
         <ToggleGroup.Item value="closed">已结束</ToggleGroup.Item>
+        <ToggleGroup.Item value="dns">DNS</ToggleGroup.Item>
         <ToggleGroup.Item value="activity">内核活动</ToggleGroup.Item>
       </ToggleGroup.Root>
       <label className="field" style={{ width: 240 }}>
@@ -318,7 +332,8 @@ function ActivityList({ query }: { query: string }) {
 function ConnectionDetail({ conn, onClose }: { conn: Connection | null; onClose: () => void }) {
   const rows: [string, string | undefined][] = conn
     ? [
-        ["序号", `#${conn.seq}${conn.logId ? ` · 日志编号 ${conn.logId}` : ""}`],
+        ["序号", `#${conn.seq}${conn.logId ? ` · 日志编号 ${conn.logId}` : ""}${conn.flow ? " · TUN 预匹配" : ""}`],
+        ["失败", conn.error],
         ["目标", conn.domain ? `${conn.domain}（${conn.destination}）` : conn.destination],
         ["原始目标", conn.originDestination ? `${conn.originDestination}${conn.fakeIp ? "（FakeIP）" : ""}` : conn.fakeIp ? "FakeIP" : undefined],
         ["解析地址", conn.addresses.length ? conn.addresses.join("、") : undefined],
@@ -333,6 +348,7 @@ function ConnectionDetail({ conn, onClose }: { conn: Connection | null; onClose:
         ["出站", `${conn.chain.join(" → ") || conn.outbound}（${conn.outboundType}）`],
         ["上传", `${bytes(conn.upload)}${!conn.closedAt && conn.uploadRate ? ` · ${rate(conn.uploadRate)}` : ""}`],
         ["下载", `${bytes(conn.download)}${!conn.closedAt && conn.downloadRate ? ` · ${rate(conn.downloadRate)}` : ""}`],
+        ["路由用时", conn.routingMs ? `${conn.routingMs} ms（接受连接到规则匹配完成，含嗅探和域名解析，不含握手）` : undefined],
         ["开始", new Date(conn.createdAt).toLocaleString()],
         ["结束", conn.closedAt ? new Date(conn.closedAt).toLocaleString() : "仍在连接"],
       ]
@@ -341,13 +357,19 @@ function ConnectionDetail({ conn, onClose }: { conn: Connection | null; onClose:
     <Dialog.Root open={!!conn} onOpenChange={(open) => !open && onClose()}>
       <Dialog.Portal>
         <Dialog.Overlay className="overlay" />
-        <Dialog.Content className="dialog" style={{ width: "min(560px, calc(100vw - 48px))", top: "14%" }}>
+        <Dialog.Content className="dialog" style={{ width: "min(720px, calc(100vw - 48px))", top: "8%", maxHeight: "86vh", overflow: "auto" }}>
           <Dialog.Title asChild>
             <h2 className="ellipsis">{conn?.domain || conn?.destination}</h2>
           </Dialog.Title>
           <Dialog.Description asChild>
             <p>连接详情</p>
           </Dialog.Description>
+          {conn?.processPath && (
+            <div className="detail-proc">
+              <ProcessIcon path={conn.processPath} size={20} />
+              <span>{conn.process}</span>
+            </div>
+          )}
           <dl className="details selectable">
             {rows
               .filter(([, v]) => v)
@@ -358,6 +380,7 @@ function ConnectionDetail({ conn, onClose }: { conn: Connection | null; onClose:
                 </div>
               ))}
           </dl>
+          {conn?.logId ? <ConnectionLog logId={conn.logId} /> : null}
           <div className="actions">
             <Dialog.Close asChild>
               <button className="btn">关闭</button>
@@ -366,5 +389,162 @@ function ConnectionDetail({ conn, onClose }: { conn: Connection | null; onClose:
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
+  );
+}
+
+/** Every line the core logged for a connection, at every level. */
+function ConnectionLog({ logId }: { logId: number }) {
+  const [lines, setLines] = useState<LogLine[] | null>(null);
+  useEffect(() => {
+    let live = true;
+    const load = () => box.connectionLogs(logId).then((l) => live && setLines(l), () => {});
+    load();
+    const off = events.logs.on(load);
+    return () => {
+      live = false;
+      off();
+    };
+  }, [logId]);
+  return (
+    <div className="conn-log">
+      <div className="faint" style={{ fontSize: 12, margin: "12px 0 4px" }}>
+        这个连接的内核日志（所有级别，不受日志级别限制）
+      </div>
+      {lines && lines.length === 0 ? (
+        <p className="faint" style={{ fontSize: 12 }}>
+          没有记录。日志按连接保留最近 4000 个，较早的连接已被清掉。
+        </p>
+      ) : (
+        <div className="logs selectable">
+          {(lines ?? []).map((l, i) => (
+            <div className="log" key={i}>
+              <time>{clock(l.time)}</time>
+              <span className={`lvl ${l.level}`}>{l.level}</span>
+              <span className="msg">{l.message.replace(/^\[\d+ [^\]]*\] /, "")}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const dnsSources: Record<string, string> = {
+  exchanged: "查询",
+  cached: "缓存",
+  optimistic: "过期缓存",
+  refreshed: "刷新",
+  rejected: "拒绝",
+  failed: "失败",
+};
+
+/** What a DNS server is, as the Surge-like page names it. */
+function serverKind(type?: string): string {
+  switch (type) {
+    case "hosts":
+      return "本地";
+    case "local":
+      return "系统";
+    case "fakeip":
+      return "FakeIP";
+    case undefined:
+    case "":
+      return "";
+    default:
+      return "远程";
+  }
+}
+
+/** The DNS queries the core answered, from its log. */
+function DNSList({ query, running }: { query: string; running: boolean }) {
+  const [list, setList] = useState<DNSRecord[]>([]);
+  useEffect(() => {
+    let live = true;
+    let pending = false;
+    const load = () => {
+      if (pending) return;
+      pending = true;
+      box
+        .dnsRecords(query, 500)
+        .then((l) => live && setList(l), () => {})
+        .finally(() => (pending = false));
+    };
+    // The DNS lines come with the log's events.
+    load();
+    const off = events.logs.on(load);
+    return () => {
+      live = false;
+      off();
+    };
+  }, [query]);
+  return (
+    <div>
+      <div className="subbar" style={{ borderTop: 0, paddingTop: 0 }}>
+        <span className="faint" style={{ fontSize: 12 }}>
+          {list.length} 条 · 来自内核的 DNS 日志
+        </span>
+        <div className="end">
+          <button
+            className="btn ghost"
+            disabled={!running}
+            onClick={async () => {
+              try {
+                await box.clearDNSCache();
+                toast.success("已清空内核的 DNS 缓存");
+              } catch (err) {
+                toast.error("没能清空 DNS 缓存", { description: errorText(err) });
+              }
+            }}
+            title="清空内核的 DNS 缓存，之后的查询重新向服务器请求。不会清空 macOS 自己的 DNS 缓存。"
+          >
+            清除 DNS 缓存
+          </button>
+          <button className="btn ghost" onClick={() => box.clearDNSRecords()}>
+            清空记录
+          </button>
+        </div>
+      </div>
+      <div style={{ padding: "0 24px 0 28px" }}>
+        <DNSQuery running={running} />
+      </div>
+      {list.length === 0 ? (
+        <p className="placeholder" style={{ padding: "18px 28px", maxWidth: 680 }}>
+          {query ? "没有匹配的查询。" : "内核运行后，每次 DNS 查询（应用的查询，以及内核为连接解析域名）都会出现在这里：结果、走的服务器、是否来自缓存。"}
+        </p>
+      ) : (
+        <div className="table dns-table">
+          <div className="thead">
+            <span>时间</span>
+            <span>域名</span>
+            <span>结果</span>
+            <span>服务器</span>
+            <span>来源</span>
+          </div>
+          {list.map((r, i) => (
+            <div className={`trow${r.source === "failed" ? " failed" : ""}`} key={i}>
+              <span className="faint">{clock(r.time)}</span>
+              <span style={{ minWidth: 0, display: "flex", flexDirection: "column" }}>
+                <span className="host" title={r.domain}>
+                  {r.domain}
+                </span>
+                <span className="faint" style={{ fontSize: 11 }}>
+                  {[r.type, r.rcode && r.rcode !== "NOERROR" ? r.rcode : "", r.ttl ? `TTL ${r.ttl}s` : ""].filter(Boolean).join(" · ")}
+                </span>
+              </span>
+              <span className="ellipsis selectable mono" title={r.error || r.answers.join("\n")} style={{ fontSize: 11.5 }}>
+                {r.error ? <span className="danger-text">{r.error}</span> : r.answers.map((a) => a.replace(/^[A-Z0-9]+ /, "")).join(", ") || <span className="faint">无记录</span>}
+              </span>
+              <span style={{ minWidth: 0, display: "flex", flexDirection: "column" }}>
+                <span className="ellipsis">{r.server || "—"}</span>
+                <span className="faint" style={{ fontSize: 11 }}>
+                  {[serverKind(r.serverType), r.server ? (r.byRule ? "DNS 规则" : "默认") : ""].filter(Boolean).join(" · ")}
+                </span>
+              </span>
+              <span className={r.source === "failed" ? "danger-text" : "faint"}>{dnsSources[r.source] ?? r.source}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

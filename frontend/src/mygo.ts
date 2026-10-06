@@ -100,6 +100,15 @@ export interface Connection {
   chain: string[];
   upload: number;
   download: number;
+  /**
+   * RoutingMs is how long it took from being accepted to its rule
+   * matched, sniffing and resolving included, the handshake not.
+   */
+  routingMs?: number;
+  /** Error is the first error the core logged for it, as a failed dial. */
+  error?: string;
+  /** Flow is set for a flow of TUN routed before its connection. */
+  flow?: boolean;
   /** The rates of the last second, while open: bytes per second. */
   uploadRate: number;
   downloadRate: number;
@@ -114,6 +123,42 @@ export interface DNSAnswer {
   type: string;
   ttl: number;
   data: string;
+}
+
+/** DNSRecord is a DNS query the core answered, or failed to. */
+export interface DNSRecord {
+  time: string;
+  /**
+   * LogID is the ID its log lines carry, which a connection's shares;
+   * zero for a query of the core's own, as for a rule-set download.
+   */
+  logId?: number;
+  domain: string;
+  /**
+   * Type is the type asked, as A or AAAA; empty when the log did not
+   * tell it, as for a lookup answered without records.
+   */
+  type?: string;
+  /**
+   * Source is how it was answered: exchanged (asked the server),
+   * cached, optimistic (a stale answer served while refreshing),
+   * refreshed, rejected, or failed.
+   */
+  source: string;
+  rcode?: string;
+  ttl?: number;
+  /** Answers are the records, as "A 93.184.215.14". */
+  answers: string[];
+  /**
+   * Server is the DNS server's tag, from the rule that routed the query,
+   * or the default server when no rule did.
+   */
+  server?: string;
+  /** ServerType is the server's type, as hosts, local, fakeip or https. */
+  serverType?: string;
+  /** ByRule is set when a DNS rule chose the server. */
+  byRule?: boolean;
+  error?: string;
 }
 
 /** DNSResult is the answer of a DNS query through the core. */
@@ -392,6 +437,10 @@ export const Box = {
   clearDNSCache(): Promise<void> {
     return call("Box.ClearDNSCache");
   },
+  /** ClearDNSRecords forgets the DNS queries recorded. */
+  clearDNSRecords(): Promise<void> {
+    return call("Box.ClearDNSRecords");
+  },
   /** ClearLogs empties the log. */
   clearLogs(): Promise<void> {
     return call("Box.ClearLogs");
@@ -403,6 +452,13 @@ export const Box = {
   /** CloseConnection closes a connection. */
   closeConnection(id: string): Promise<void> {
     return call("Box.CloseConnection", id);
+  },
+  /**
+   * ConnectionLogs returns the core's lines of one connection, by the ID
+   * they carry, at every level, oldest first.
+   */
+  connectionLogs(logID: number): Promise<LogLine[]> {
+    return call("Box.ConnectionLogs", logID);
   },
   /**
    * Connections returns the connections the core routed, newest first:
@@ -417,6 +473,13 @@ export const Box = {
    */
   currentSystemProxy(): Promise<string> {
     return call("Box.CurrentSystemProxy");
+  },
+  /**
+   * DNSRecords returns the DNS queries the core answered, newest first,
+   * that contain query, at most limit.
+   */
+  dnsRecords(query: string, limit: number): Promise<DNSRecord[]> {
+    return call("Box.DNSRecords", query, limit);
   },
   /** DeleteProfile moves a profile to the Trash. */
   deleteProfile(name: string): Promise<void> {
@@ -482,6 +545,13 @@ export const Box = {
   /** OpenDataDir opens the data directory in Finder. */
   openDataDir(): Promise<void> {
     return call("Box.OpenDataDir");
+  },
+  /**
+   * ProcessIcon returns the icon of the app a program's path is in, as a
+   * data URL of a PNG, or "" for a program without one.
+   */
+  processIcon(path: string): Promise<string> {
+    return call("Box.ProcessIcon", path);
   },
   /** Profiles lists the configuration files. */
   profiles(): Promise<Profiles> {

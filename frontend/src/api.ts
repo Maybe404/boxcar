@@ -10,6 +10,7 @@ import type {
   ActivityKind,
   CheckResult,
   Connection,
+  DNSRecord,
   DNSResult,
   ImportResult,
   LegacyData,
@@ -194,6 +195,10 @@ function makePreview() {
     return { name, path: `~/…/profiles/${name}.json`, size: content.length, modified: iso(Date.now()), remote, origin, edited: false };
   };
   const closed: Connection[] = [];
+  const dnsRecords: DNSRecord[] = [];
+  const connLines: Record<number, LogLine[]> = {};
+  // A made-up icon for the preview's apps; a program on its own has none.
+  const appIcon = `data:image/svg+xml;utf8,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect x="4" y="4" width="56" height="56" rx="13" fill="#2e5cf6"/><circle cx="32" cy="32" r="14" fill="none" stroke="#fff" stroke-width="5"/></svg>')}`;
 
   const bump = () => logs.emit(++version);
   const addLog = (level: string, message: string, source: "core" | "app" = "core") => {
@@ -265,6 +270,8 @@ function makePreview() {
     process: i % 2 ? "Safari" : "curl",
     processPath: i % 2 ? "/Applications/Safari.app/Contents/MacOS/Safari" : "/usr/bin/curl",
     rule: i === 1 ? "domain_suffix=github.com => route(proxy)" : "final",
+    routingMs: 2 + (i % 4) * 3,
+    error: i === 6 ? "outbound/vless[香港 01]: open connection to fonts.gstatic.com:443 using outbound/vless[香港 01]: dial tcp 203.0.113.9:443: i/o timeout" : undefined,
     outbound: i % 5 === 4 ? "direct" : groups[0].selected,
     outboundType: i % 5 === 4 ? "direct" : "vless",
     chain: i % 5 === 4 ? ["direct"] : ["proxy", groups[0].selected],
@@ -289,9 +296,40 @@ function makePreview() {
     if (Math.random() < 0.4) {
       const i = Math.floor(Math.random() * hosts.length);
       const id = 1_000_000 + i * 7919;
-      addLog("info", `[${id} 0ms] inbound/mixed[mixed-in]: inbound connection to ${hosts[i]}:443`);
-      addLog("info", `[${id} 2ms] outbound/vless[${groups[0].selected}]: outbound connection to ${hosts[i]}:443`);
+      const host = hosts[i];
+      const lines: [string, string][] = [
+        ["info", `[${id} 0ms] inbound/mixed[mixed-in]: inbound connection from 127.0.0.1:${50000 + i}`],
+        ["info", `[${id} 0ms] inbound/mixed[mixed-in]: inbound connection to ${host}:443`],
+        ["debug", `[${id} 1ms] router: sniffed protocol: tls, domain: ${host}`],
+        ["debug", `[${id} 1ms] router: match[1] domain_suffix=${host} => route(proxy)`],
+        ["debug", `[${id} 2ms] dns: exchanged ${host} NOERROR 300`],
+        ["info", `[${id} 2ms] outbound/vless[${groups[0].selected}]: outbound connection to ${host}:443`],
+      ];
+      if (i === 6) lines.push(["error", `[${id} 1.02s] ${connection(6, Date.now()).error}`]);
+      connLines[id] = [...(connLines[id] ?? []), ...lines.map(([level, message]) => ({ time: iso(Date.now()), level, source: "core", message }))].slice(-200);
+      for (const [level, message] of lines) if (level !== "debug") addLog(level, message);
+      if (host !== "1.1.1.1") {
+        const cached = Math.random() < 0.5;
+        dnsRecords.unshift({
+          time: iso(Date.now()),
+          logId: id,
+          domain: host,
+          type: "A",
+          source: cached ? "cached" : "exchanged",
+          rcode: "NOERROR",
+          ttl: cached ? 120 : 300,
+          answers: [`A 142.250.${i}.${100 + i}`],
+          server: host.endsWith(".cn") ? "dns-cn" : "dns-remote",
+          serverType: "https",
+          byRule: false,
+        });
+      }
     }
+    if (Math.random() < 0.08) {
+      dnsRecords.unshift({ time: iso(Date.now()), domain: "ads.example.com", type: "A", source: "failed", answers: [], server: "dns-remote", serverType: "https", error: "i/o timeout" });
+      dnsRecords.unshift({ time: iso(Date.now()), domain: "localhost", type: "A", source: "exchanged", rcode: "NOERROR", ttl: 10, answers: ["A 127.0.0.1"], server: "hosts", serverType: "hosts", byRule: true });
+    }
+    dnsRecords.splice(500);
     if (Math.random() < 0.15) closed.unshift(connection(closed.length + 20, Date.now(), Date.now()));
     state.emit(snapshot());
   }, 1000);
@@ -391,6 +429,20 @@ function makePreview() {
     },
     async clearDNSCache() {},
     async resetFakeIP() {},
+    async dnsRecords(query: string): Promise<DNSRecord[]> {
+      const q = query.toLowerCase();
+      return dnsRecords.filter((r) => `${r.domain} ${r.answers.join(" ")} ${r.server}`.toLowerCase().includes(q));
+    },
+    async clearDNSRecords() {
+      dnsRecords.length = 0;
+      bump();
+    },
+    async connectionLogs(logId: number): Promise<LogLine[]> {
+      return connLines[logId] ?? [];
+    },
+    async processIcon(path: string) {
+      return path.includes(".app/") ? appIcon : "";
+    },
     async queryDNS(name: string, qtype: string): Promise<DNSResult> {
       if (status !== "running") throw new Error("内核没有运行");
       await wait(120);

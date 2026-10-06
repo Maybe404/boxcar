@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -36,6 +37,13 @@ type connRecord struct {
 	// measured from.
 	uploadRate, downloadRate int64
 	lastUp, lastDown         int64
+	// routing is how long the connection took from being accepted to
+	// its rule matched: sniffing, resolving and matching; zero unknown.
+	routing time.Duration
+	// flow is set for a flow of TUN routed before its connection, which
+	// the history tracks itself: the traffic manager's ID is not known.
+	flow   bool
+	handle tun.FlowHandle
 }
 
 // connHistory records every connection the router hands to its trackers,
@@ -62,26 +70,29 @@ type metadataTracker interface {
 // add records a connection, given as wrapped by the traffic manager, which
 // is the router's first tracker.
 func (h *connHistory) add(ctx context.Context, conn any) {
-	t, ok := conn.(metadataTracker)
-	if !ok {
-		return
+	if t, ok := conn.(metadataTracker); ok {
+		h.addMeta(ctx, t.Metadata(), false)
 	}
-	meta := t.Metadata()
+}
+
+func (h *connHistory) addMeta(ctx context.Context, meta *trafficcontrol.TrackerMetadata, flow bool) *connRecord {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if _, loaded := h.byID[meta.ID]; loaded {
-		return
+	if r, loaded := h.byID[meta.ID]; loaded {
+		return r
 	}
 	h.seq++
-	r := &connRecord{meta: meta, seq: h.seq}
+	r := &connRecord{meta: meta, seq: h.seq, flow: flow}
 	if id, ok := log.IDFromContext(ctx); ok {
 		r.logID = id.ID
+		r.routing = max(meta.CreatedAt.Sub(id.CreatedAt), 0)
 	}
 	h.records = append(h.records, r)
 	h.byID[meta.ID] = r
 	if len(h.records) > historyLimit {
 		h.trimLocked()
 	}
+	return r
 }
 
 // trimLocked drops the oldest closed records, a tenth at a time.
@@ -109,8 +120,63 @@ func (h *connHistory) RoutedPacketConnection(ctx context.Context, conn N.PacketC
 	return conn
 }
 
-func (h *connHistory) RoutedFlow(context.Context, adapter.InboundContext, adapter.Rule, adapter.Outbound) tun.FlowTracker {
-	return nil
+// RoutedFlow records a flow TUN routes before its connection: counted and
+// closed through the tracker returned, as the traffic manager's own is.
+func (h *connHistory) RoutedFlow(ctx context.Context, metadata adapter.InboundContext, rule adapter.Rule, outbound adapter.Outbound) tun.FlowTracker {
+	chain := make([]string, 0, len(metadata.OutboundChain))
+	for i := len(metadata.OutboundChain) - 1; i >= 0; i-- {
+		chain = append(chain, metadata.OutboundChain[i].Tag())
+	}
+	meta := &trafficcontrol.TrackerMetadata{
+		ID: uuid.Must(uuid.NewV4()), Metadata: metadata, CreatedAt: time.Now(),
+		Upload: new(atomic.Int64), Download: new(atomic.Int64),
+		Chain: chain, Rule: rule, Outbound: outbound.Tag(), OutboundType: outbound.Type(),
+	}
+	return &flowRecord{history: h, record: h.addMeta(ctx, meta, true)}
+}
+
+// flowRecord follows a flow for the history.
+type flowRecord struct {
+	history *connHistory
+	record  *connRecord
+}
+
+func (f *flowRecord) AttachFlow(handle tun.FlowHandle) {
+	f.history.mu.Lock()
+	if f.record.closedAt.IsZero() {
+		f.record.handle = handle
+	}
+	f.history.mu.Unlock()
+}
+func (f *flowRecord) CountForward(n int) { f.record.meta.Upload.Add(int64(n)) }
+func (f *flowRecord) CountReverse(n int) { f.record.meta.Download.Add(int64(n)) }
+func (f *flowRecord) FlowEstablished()   {}
+func (f *flowRecord) CloseFlow(tun.FlowCloseReason) {
+	h, r := f.history, f.record
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if r.closedAt.IsZero() {
+		r.closedAt = time.Now()
+		r.upload, r.download = r.meta.Upload.Load(), r.meta.Download.Load()
+		r.uploadRate, r.downloadRate, r.handle = 0, 0, nil
+	}
+}
+
+// closeFlow closes a flow of the history by its ID, reporting whether
+// there was one: the traffic manager knows it by another.
+func (h *connHistory) closeFlow(id uuid.UUID) bool {
+	h.mu.Lock()
+	r := h.byID[id]
+	var handle tun.FlowHandle
+	if r != nil && r.flow {
+		handle = r.handle
+	}
+	h.mu.Unlock()
+	if handle == nil {
+		return false
+	}
+	handle.CloseFlow()
+	return true
 }
 
 // reconcile marks the records whose connections the traffic manager no
@@ -124,7 +190,8 @@ func (h *connHistory) reconcile(traffic *trafficcontrol.Manager, now time.Time) 
 			continue
 		}
 		up, down := r.meta.Upload.Load(), r.meta.Download.Load()
-		if traffic.Connection(r.meta.ID) == nil {
+		// A flow closes through its tracker.
+		if !r.flow && traffic.Connection(r.meta.ID) == nil {
 			r.closedAt = now
 			r.upload, r.download = up, down
 			r.uploadRate, r.downloadRate = 0, 0
@@ -143,6 +210,7 @@ func (h *connHistory) closeAll(now time.Time) {
 		if r.closedAt.IsZero() {
 			r.closedAt = now
 			r.upload, r.download = r.meta.Upload.Load(), r.meta.Download.Load()
+			r.handle = nil
 		}
 	}
 }
@@ -182,6 +250,7 @@ func (h *connHistory) list(closed bool) []Connection {
 		}
 		c := toConnection(r.meta, closedAt, up, down)
 		c.Seq, c.LogID, c.UploadRate, c.DownloadRate = r.seq, r.logID, upRate, downRate
+		c.RoutingMs, c.Flow = int(r.routing.Milliseconds()), r.flow
 		out = append(out, c)
 	}
 	return out

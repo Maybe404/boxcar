@@ -172,6 +172,13 @@ type Connection struct {
 	Chain        []string `json:"chain"`
 	Upload       int64    `json:"upload"`
 	Download     int64    `json:"download"`
+	// RoutingMs is how long it took from being accepted to its rule
+	// matched, sniffing and resolving included, the handshake not.
+	RoutingMs int `json:"routingMs,omitempty"`
+	// Error is the first error the core logged for it, as a failed dial.
+	Error string `json:"error,omitempty"`
+	// Flow is set for a flow of TUN routed before its connection.
+	Flow bool `json:"flow,omitempty"`
 	// The rates of the last second, while open: bytes per second.
 	UploadRate   int64     `json:"uploadRate"`
 	DownloadRate int64     `json:"downloadRate"`
@@ -430,6 +437,9 @@ func (c *boxCore) start(content []byte) error {
 		hook.Close()
 		return err
 	}
+	// Once started: without DNS servers in the configuration, the core
+	// adds its local one only as it starts.
+	c.tellDNSServers(ctx)
 	c.mu.Lock()
 	c.ctx, c.cancel, c.instance, c.history, c.logLevel, c.testHook = ctx, cancel, instance, history, level, hook
 	c.logDisabled = logDisabled
@@ -440,6 +450,24 @@ func (c *boxCore) start(content []byte) error {
 	c.stats = Stats{}
 	c.mu.Unlock()
 	return nil
+}
+
+// tellDNSServers gives the DNS page the servers of the configuration
+// running: the default one, and the type of each.
+func (c *boxCore) tellDNSServers(ctx context.Context) {
+	transports := service.FromContext[adapter.DNSTransportManager](ctx)
+	if transports == nil {
+		return
+	}
+	types := map[string]string{}
+	for _, t := range transports.Transports() {
+		types[t.Tag()] = t.Type()
+	}
+	defaultServer := ""
+	if d := transports.Default(); d != nil {
+		defaultServer = d.Tag()
+	}
+	c.logs.dns.setServers(defaultServer, types)
 }
 
 // configLogLevel is the level a configuration logs at, as sing-box
@@ -747,7 +775,14 @@ func (c *boxCore) SetMode(mode string) error {
 }
 
 func (c *boxCore) Connections(closed bool) []Connection {
-	return c.tracked.list(closed)
+	list := c.tracked.list(closed)
+	// What failed, from the core's error lines of each connection.
+	for i := range list {
+		if list[i].LogID != 0 {
+			list[i].Error = c.logs.conns.errorOf(list[i].LogID)
+		}
+	}
+	return list
 }
 
 func (c *boxCore) CloseConnection(id string) {
@@ -759,7 +794,9 @@ func (c *boxCore) CloseConnection(id string) {
 	}
 	if t := traffic.Connection(uuid.FromStringOrNil(id)); t != nil {
 		t.Close()
+		return
 	}
+	c.tracked.closeFlow(uuid.FromStringOrNil(id))
 }
 
 func (c *boxCore) CloseAllConnections() {

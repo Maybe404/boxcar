@@ -39,7 +39,8 @@ The core runs inside the app itself: no separate binary, no helper service, no s
 - Every profile keeps its source (the file imported, the subscription as downloaded, the sample created from), shows where it came from and when, whether it was edited since, and compares the two side by side, block by block back to the source. A subscription update merges three ways and keeps the user's edits; where both changed the same thing, the edit stays and the place is listed.
 - What runs is visible: the profile running, since when, read only; when it was saved since, a notice, the difference, and a reload.
 - Outbound groups: selector switching, URL tests with latency per node; urltest groups choose by themselves.
-- Connections: live list with sequence number, per-connection rate, resolved addresses and the log ID that ties a connection to its log lines; group by client or host; search, close one.
+- Connections: live list with sequence number, the app's icon, per-connection rate, resolved addresses, routing time, failures and the core's every log line of the connection (by the ID its lines carry, at every level); TUN flows routed before their connection included; group by client or host; search, close one.
+- DNS: every query the core answered, put together from its log: domain, type, answer, TTL, the server (the DNS rule's, or the default) and its kind, from the cache or not, failures; clear the core's DNS cache, query through its rules.
 - Logs: the core's and the app's own (start, stop, system proxy, subscriptions, profiles), filter by source, level and text, copy, export, clear; says when the configuration's level or `log.disabled` hides lines.
 - Diagnostics: the running rules, a DNS query through the core's DNS rules, clear the DNS cache, reset FakeIP.
 - Types the build leaves out of the core (as NaïveProxy outbounds) are marked where they are offered.

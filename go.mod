@@ -5,6 +5,7 @@ go 1.27.1
 tool github.com/egoist/mygo/cmd/mygo
 
 require (
+	github.com/ebitengine/purego v0.11.1
 	github.com/egoist/mygo v0.2.12
 	github.com/gofrs/uuid/v5 v5.5.1
 	github.com/miekg/dns v1.1.72
@@ -36,7 +37,6 @@ require (
 	github.com/dblohm7/wingoes v0.0.0-20240119213807-a09d6be7affa // indirect
 	github.com/dgryski/go-camellia v0.0.0-20191119043421-69a8a13fb23d // indirect
 	github.com/dgryski/go-metro v0.0.0-20180109044635-280f6062b5bc // indirect
-	github.com/ebitengine/purego v0.11.1 // indirect
 	github.com/florianl/go-nfqueue/v2 v2.1.0 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.0 // indirect

@@ -82,3 +82,44 @@ func TestSubscriptionErrorsLeaveTheAddressOut(t *testing.T) {
 		t.Fatalf("error %v", err)
 	}
 }
+
+// namedOutbound is an outbound by name only; nothing dials through it.
+type namedOutbound struct {
+	adapter.Outbound
+	tag string
+}
+
+func (o namedOutbound) Tag() string  { return o.tag }
+func (o namedOutbound) Type() string { return "direct" }
+
+type fakeFlowHandle struct{ closed bool }
+
+func (h *fakeFlowHandle) CloseFlow() { h.closed = true }
+
+func TestHistoryFollowsFlows(t *testing.T) {
+	h := newConnHistory()
+	out := namedOutbound{tag: "direct"}
+	accepted := time.Now().Add(-30 * time.Millisecond)
+	ctx := log.ContextWithID(context.Background(), log.ID{ID: 99, CreatedAt: accepted})
+	flow := h.RoutedFlow(ctx, adapter.InboundContext{Network: "udp", OutboundChain: []adapter.Outbound{out}}, nil, out)
+	handle := &fakeFlowHandle{}
+	flow.AttachFlow(handle)
+	flow.CountForward(100)
+	flow.CountReverse(300)
+
+	open := h.list(false)
+	if len(open) != 1 || !open[0].Flow || open[0].Upload != 100 || open[0].Download != 300 || open[0].Outbound != "direct" || open[0].LogID != 99 {
+		t.Fatalf("open %+v", open)
+	}
+	if open[0].RoutingMs < 30 {
+		t.Fatalf("routing %d ms", open[0].RoutingMs)
+	}
+	// Closed from the page, by the history's own ID.
+	if !h.closeFlow(uuid.FromStringOrNil(open[0].ID)) || !handle.closed {
+		t.Fatal("not closed")
+	}
+	flow.CloseFlow(0)
+	if closed := h.list(true); len(closed) != 1 || closed[0].Download != 300 {
+		t.Fatalf("closed %+v", closed)
+	}
+}
