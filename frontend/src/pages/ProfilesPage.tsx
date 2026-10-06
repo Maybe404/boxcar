@@ -1,14 +1,28 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import CodeMirror from "@uiw/react-codemirror";
 import { json } from "@codemirror/lang-json";
 import { EditorView, keymap } from "@codemirror/view";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
-import { AlertDialog, Dialog, DropdownMenu, Switch } from "radix-ui";
+import { AlertDialog, Dialog, DropdownMenu, Switch, ToggleGroup } from "radix-ui";
 import { CircleCheck, CircleX, Cloud, Download, FileJson, FolderOpen, MoreHorizontal, Pencil, Plus, RefreshCw, Trash2, Wand2 } from "lucide-react";
 import { toast } from "sonner";
 import { box, errorText, events, type CheckResult, type Profiles, type Remote, type Snapshot } from "../api";
 import { ago, bytes } from "../format";
+
+// The visual editor carries the schema and the documentation of the core:
+// loaded when first shown.
+const ConfigEditor = lazy(() => import("../config/ConfigEditor"));
+
+type Mode = "visual" | "json";
+const modeKey = "boxcar.profiles.mode";
+function savedMode(): Mode {
+  try {
+    return localStorage.getItem(modeKey) === "json" ? "json" : "visual";
+  } catch {
+    return "visual";
+  }
+}
 
 const editorTheme = EditorView.theme({
   "&": { backgroundColor: "var(--bg)", color: "var(--text)" },
@@ -58,6 +72,15 @@ export function ProfilesPage({ snap, importPending, onImportHandled, onDirtyChan
   const [adding, setAdding] = useState(false);
   const [editingRemote, setEditingRemote] = useState(false);
   const [updating, setUpdating] = useState(false);
+  const [mode, setModeNow] = useState<Mode>(savedMode);
+  const setMode = (m: Mode) => {
+    setModeNow(m);
+    try {
+      localStorage.setItem(modeKey, m);
+    } catch {
+      // Not remembered.
+    }
+  };
 
   const reload = useCallback(async (choose?: string) => {
     const l = await box.profiles();
@@ -141,6 +164,9 @@ export function ProfilesPage({ snap, importPending, onImportHandled, onDirtyChan
   const active = list.active === chosen;
   const runningThis = snap.status === "running" && snap.profile === chosen && active;
 
+  // Delays can be measured while the core runs this profile.
+  const runtime = useMemo(() => ({ live: runningThis, testOutbound: (tag: string) => box.testOutbound(tag) }), [runningThis]);
+
   const save = useCallback(async () => {
     if (loadedFor !== chosen) return;
     try {
@@ -166,7 +192,7 @@ export function ProfilesPage({ snap, importPending, onImportHandled, onDirtyChan
     try {
       setCheck(await box.checkProfile(text));
     } catch (err) {
-      setCheck({ ok: false, error: errorText(err), warnings: [] });
+      setCheck({ ok: false, error: errorText(err), warnings: [], problems: [] });
     } finally {
       setChecking(false);
     }
@@ -274,6 +300,10 @@ export function ProfilesPage({ snap, importPending, onImportHandled, onDirtyChan
               </button>
             )}
             <div className="tools">
+              <ToggleGroup.Root className="segmented" type="single" value={mode} onValueChange={(v) => v && setMode(v as Mode)} aria-label="编辑方式">
+                <ToggleGroup.Item value="visual">可视化</ToggleGroup.Item>
+                <ToggleGroup.Item value="json">JSON</ToggleGroup.Item>
+              </ToggleGroup.Root>
               <DropdownMenu.Root>
                 <DropdownMenu.Trigger asChild>
                   <button className="btn ghost icon" aria-label="更多">
@@ -330,36 +360,71 @@ export function ProfilesPage({ snap, importPending, onImportHandled, onDirtyChan
               <span>上次更新失败：{profile.remote.error}</span>
             </div>
           )}
-          <div className="editor">
-            <CodeMirror
-              value={text}
-              onChange={(t) => {
-                setText(t);
-                setCheck(null);
-              }}
-              extensions={extensions}
-              basicSetup={{ highlightActiveLine: true, foldGutter: true, autocompletion: false }}
-              height="100%"
-              theme="none"
-            />
-          </div>
+          {mode === "json" ? (
+            <div className="editor">
+              <CodeMirror
+                value={text}
+                onChange={(t) => {
+                  setText(t);
+                  setCheck(null);
+                }}
+                extensions={extensions}
+                basicSetup={{ highlightActiveLine: true, foldGutter: true, autocompletion: false }}
+                height="100%"
+                theme="none"
+              />
+            </div>
+          ) : (
+            <div className="editor visual">
+              {loadedFor === chosen ? (
+                <Suspense fallback={<div className="placeholder">正在打开…</div>}>
+                  <ConfigEditor
+                    text={text}
+                    saved={saved}
+                    onText={(t) => {
+                      setText(t);
+                      setCheck(null);
+                    }}
+                    runtime={runtime}
+                    checked={check?.problems}
+                    onShowJSON={() => setMode("json")}
+                  />
+                </Suspense>
+              ) : (
+                <div className="placeholder">正在读取…</div>
+              )}
+            </div>
+          )}
+          {mode === "json" && check && check.problems.length > 0 && (
+            <ul className="check-problems selectable">
+              {check.problems.map((p, i) => (
+                <li key={i} className={p.fatal ? "" : "mild"}>
+                  <code>{p.path}</code>
+                  <span>{p.message}</span>
+                </li>
+              ))}
+            </ul>
+          )}
           <footer className="statusbar">
             {check?.ok ? (
               <span className="msg ok" title={check.warnings.map((w) => w.message).join("\n")}>
                 <CircleCheck size={14} /> 校验通过：可以启动（只检查，未启动）
                 {check.warnings.length > 0 && <span className="faint">· {check.warnings.length} 处已废弃写法</span>}
+                {check.problems.length > 0 && <span className="faint">· {check.problems.length} 处引用不存在（不影响启动）</span>}
               </span>
             ) : check ? (
               <span className="msg bad selectable" title={check.error}>
                 <CircleX size={14} /> {check.error}
               </span>
             ) : (
-              <span className="msg faint">{dirty ? "有未保存的修改" : profile.remote ? "订阅 · 下次更新会覆盖本地修改" : "JSON · sing-box 配置"}</span>
+              <span className="msg faint">{dirty ? "有未保存的修改" : profile.remote ? "订阅 · 下次更新会覆盖本地修改" : mode === "json" ? "JSON · sing-box 配置" : "可视化编辑 · 改动同步到 JSON"}</span>
             )}
             <span className="end">
-              <button className="btn ghost" onClick={format} title="按内核读取的格式重新排版（注释会丢失）">
-                <Wand2 size={13} /> 格式化
-              </button>
+              {mode === "json" && (
+                <button className="btn ghost" onClick={format} title="按内核读取的格式重新排版（注释会丢失）">
+                  <Wand2 size={13} /> 格式化
+                </button>
+              )}
               <button className="btn" onClick={runCheck} disabled={checking}>
                 {checking ? "正在校验…" : "校验"}
               </button>

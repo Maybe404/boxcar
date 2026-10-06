@@ -29,6 +29,9 @@ type settings struct {
 	SystemProxy bool `json:"systemProxy,omitempty"`
 	// Remote are the profiles that are subscriptions, by name.
 	Remote map[string]*Remote `json:"remote,omitempty"`
+	// LegacyOffered is set once the profiles of the app's old name were
+	// imported, or the offer declined.
+	LegacyOffered bool `json:"legacyOffered,omitempty"`
 }
 
 // store keeps the profiles and the settings in a directory:

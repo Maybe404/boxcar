@@ -37,6 +37,12 @@ export interface CheckResult {
   ok: boolean;
   error?: string;
   warnings: Warning[];
+  /**
+   * Problems are references to tags nothing defines, which the core
+   * would find only once started, and tags defined twice. Those not
+   * fatal leave OK true.
+   */
+  problems: Problem[];
 }
 
 /** Connection is a connection the core routed. */
@@ -84,6 +90,17 @@ export interface ImportResult {
   failed: string[];
 }
 
+/** LegacyData is what the app named SingBox left, offered for import. */
+export interface LegacyData {
+  /**
+   * Available is whether to offer it: the old directory has profiles,
+   * this one only the sample, and the offer was not answered.
+   */
+  available: boolean;
+  dir: string;
+  profiles: string[];
+}
+
 /** LogLine is a line of the core's log. */
 export interface LogLine {
   time: string;
@@ -107,6 +124,21 @@ export interface OutboundGroup {
   selected: string;
   selectable: boolean;
   items: GroupItem[];
+}
+
+/**
+ * Problem is a part of a configuration that the core would refuse, found
+ * without building it: a reference to a tag nothing has.
+ */
+export interface Problem {
+  /** Path is where, as route.rules[2].rule_set[0]. */
+  path: string;
+  message: string;
+  /**
+   * Fatal is whether the core would refuse to start. A missing inbound
+   * only makes a rule match nothing.
+   */
+  fatal: boolean;
 }
 
 /** Profile is a configuration file. */
@@ -249,7 +281,8 @@ export const Box = {
   },
   /**
    * CheckProfile checks a configuration as `sing-box check` does: it builds
-   * an instance and closes it without starting it.
+   * an instance and closes it without starting it. It also checks what the
+   * core checks only once started: that every tag referred to exists.
    */
   checkProfile(content: string): Promise<CheckResult> {
     return call("Box.CheckProfile", content);
@@ -296,6 +329,10 @@ export const Box = {
   deleteProfile(name: string): Promise<void> {
     return call("Box.DeleteProfile", name);
   },
+  /** DismissLegacy declines the offer, which is not made again. */
+  dismissLegacy(): Promise<void> {
+    return call("Box.DismissLegacy");
+  },
   /** ExportLogs asks where to save the log, and saves it there. */
   exportLogs(level: string, query: string): Promise<string> {
     return call("Box.ExportLogs", level, query);
@@ -315,9 +352,20 @@ export const Box = {
   importFiles(paths: string[]): Promise<ImportResult> {
     return call("Box.ImportFiles", paths);
   },
+  /**
+   * ImportLegacy copies the profiles and settings of the app's old name in.
+   * The old directory is left as it is.
+   */
+  importLegacy(): Promise<ImportResult> {
+    return call("Box.ImportLegacy");
+  },
   /** ImportProfiles asks for configuration files and copies them in. */
   importProfiles(): Promise<ImportResult> {
     return call("Box.ImportProfiles");
+  },
+  /** LegacyData says whether to offer the profiles of the app's old name. */
+  legacyData(): Promise<LegacyData> {
+    return call("Box.LegacyData");
   },
   /**
    * LoginItem reports whether the app opens at login. Opening the app

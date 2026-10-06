@@ -33,7 +33,9 @@ The core runs inside the app itself: no separate binary, no helper service, no s
 ## Capabilities and Constraints
 
 - Start/stop the core; rates, totals, connection count, memory, last minute of traffic.
-- Profiles: import, create, edit JSON, rename, delete (to Trash), set active, check (build without starting, as `sing-box check`).
+- Profiles: import, create, edit JSON, rename, delete (to Trash), set active, check (build without starting, as `sing-box check`, plus a static check of every tag a configuration refers to).
+- Visual editing of profiles, two layers over the same JSON: wizards for nodes (with share links), local proxy ports, groups, routing rules, rule sets and DNS; and a form of every field, generated from the core's schema with the Chinese text of its documentation.
+- On first open, an offer to import the profiles the app left under its old name (SingBox).
 - Outbound groups: selector switching, URL tests with latency per node; urltest groups choose by themselves.
 - Connections: live list, search, close one.
 - Logs: live, filter by level and text, copy, clear.

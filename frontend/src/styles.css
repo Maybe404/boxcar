@@ -475,7 +475,14 @@ button {
   background: var(--bg);
   box-shadow: var(--popover-shadow);
   border: 0.5px solid var(--hair);
-  animation: pop-in 0.18s var(--ease);
+  animation: dialog-in 0.18s var(--ease);
+}
+/* As pop-in, keeping the dialog centred. */
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) scale(0.97) translateY(-2px);
+  }
 }
 .dialog h2 {
   margin: 0 0 4px;
@@ -1066,6 +1073,34 @@ button.stop:hover {
   height: 100%;
   font-size: 12px;
 }
+.editor.visual {
+  overflow: hidden;
+}
+.check-problems {
+  list-style: none;
+  margin: 0;
+  padding: 6px 24px;
+  max-height: 140px;
+  overflow: auto;
+  border-top: 0.5px solid var(--hair);
+  font-size: 12px;
+}
+.check-problems li {
+  display: flex;
+  gap: 10px;
+  padding: 3px 0;
+}
+.check-problems code {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-2);
+}
+.check-problems span {
+  color: var(--danger);
+}
+.check-problems .mild span {
+  color: var(--text-2);
+}
 .statusbar {
   display: flex;
   align-items: center;
@@ -1166,7 +1201,7 @@ kbd {
   backdrop-filter: blur(30px) saturate(1.8);
   box-shadow: var(--popover-shadow);
   border: 0.5px solid var(--hair);
-  animation: pop-in 0.16s var(--ease);
+  animation: dialog-in 0.16s var(--ease);
 }
 .command [cmdk-input] {
   width: 100%;

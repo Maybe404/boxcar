@@ -123,6 +123,10 @@ type CheckResult struct {
 	OK       bool      `json:"ok"`
 	Error    string    `json:"error,omitempty"`
 	Warnings []Warning `json:"warnings"`
+	// Problems are references to tags nothing defines, which the core
+	// would find only once started, and tags defined twice. Those not
+	// fatal leave OK true.
+	Problems []Problem `json:"problems"`
 }
 
 // ImportResult are the profiles an import made, and the files it could
@@ -475,6 +479,9 @@ func takeover(root map[string]any) []string {
 			}
 		}
 	}
+	if ntp, _ := root["ntp"].(map[string]any); ntp["enabled"] == true && ntp["write_to_system"] == true {
+		reasons = append(reasons, "时间同步开启了 write_to_system：会改写系统时间")
+	}
 	return reasons
 }
 
@@ -741,16 +748,31 @@ func (b *Box) SaveProfile(name, content string) error {
 }
 
 // CheckProfile checks a configuration as `sing-box check` does: it builds
-// an instance and closes it without starting it.
+// an instance and closes it without starting it. It also checks what the
+// core checks only once started: that every tag referred to exists.
 func (b *Box) CheckProfile(content string) CheckResult {
 	warnings, err := checkConfig([]byte(content))
 	if warnings == nil {
 		warnings = []Warning{}
 	}
-	if err != nil {
-		return CheckResult{Error: err.Error(), Warnings: warnings}
+	problems := checkReferences(rawJSON([]byte(content)))
+	if problems == nil {
+		problems = []Problem{}
 	}
-	return CheckResult{OK: true, Warnings: warnings}
+	r := CheckResult{OK: true, Warnings: warnings, Problems: problems}
+	fatal := 0
+	for _, p := range problems {
+		if p.Fatal {
+			fatal++
+		}
+	}
+	switch {
+	case err != nil:
+		r.OK, r.Error = false, err.Error()
+	case fatal > 0:
+		r.OK, r.Error = false, fmt.Sprintf("有 %d 处引用不存在或标签重复，启动时会失败", fatal)
+	}
+	return r
 }
 
 // FormatProfile returns a configuration as sing-box reads it, indented.

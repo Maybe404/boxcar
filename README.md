@@ -12,7 +12,8 @@ Boxcar is a macOS app that brings a capable proxy core to everyday users, with a
 - **只在你点击时才启动**：打开 App 不会改动任何网络设置；会接管系统网络的配置（TUN、系统代理、改路由等）启动前会逐项说明并询问。
 - **流量线路图**：首页把流量走向画成一条线路：本机 → 入站 → 策略组 → 节点 → 互联网，点击站点即可切换节点。
 - **一条不漏的连接记录**：每条被路由的连接（含已结束的）都有来源、进程、协议、规则和出站链路；DNS、规则集、测速等内核自身的联网单独列出。
-- **配置与订阅**：导入或新建配置、远程订阅定时更新、校验、格式化、运行中重新加载。
+- **不用写 JSON 的配置**：节点（可粘贴分享链接）、本地代理端口、策略组、分流规则、规则集、DNS 都有向导；其余每个字段都能在「全部字段」里修改，附内核文档的中文说明，和 JSON 编辑器双向同步。
+- **配置与订阅**：导入或新建配置、远程订阅定时更新、校验（含启动时才会发现的引用错误）、格式化、运行中重新加载；首次打开时可以从改名前的 SingBox 导入配置。
 - **规则 / 全局 / 直连** 模式切换、节点测速、系统代理（关闭时恢复原来的设置）、菜单栏图标、⌘K 命令栏、浅色与深色。
 
 ## 构建
@@ -24,6 +25,8 @@ cd frontend && bun install && cd ..
 ./build.sh                    # build/darwin-arm64/Boxcar.app 与安装包
 bun run --cwd frontend dev    # 只在浏览器里预览界面（合成数据）
 go test -tags "$(tr -d '\n' < "$(go list -m -f '{{.Dir}}' github.com/sagernet/sing-box)/release/DEFAULT_BUILD_TAGS_OTHERS")" .
+bun run --cwd frontend test   # 可视化配置的单元测试
+go run ./tools/configschema   # 升级内核后：重新生成表单用的 schema 和中文字段说明
 ```
 
 技术栈：Go + [MyGo](https://mygo.egoist.dev/)（系统 WebView 窗口与类型化绑定）+ React、Radix、cmdk、CodeMirror。界面设计见 [DESIGN.md](DESIGN.md)，产品说明见 [PRODUCT.md](PRODUCT.md)。

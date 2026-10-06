@@ -54,3 +54,12 @@ A switched node stays lit for 2.4 s. Everything respects Reduce Motion.
 Radix primitives (popover, dropdown menu, dialog, alert dialog, toggle
 group), cmdk for the ⌘K command bar, CodeMirror 6 for profiles, sonner for
 toasts, lucide icons at stroke 1.8. All are styled from the tokens above.
+
+Forms of the visual editor are rows on hairlines like the settings: the
+label, the field's key in mono, the documentation's text in the faintest
+grey, two lines until clicked. Nested objects and list items hang off a
+hairline to their left, as stops hang off a line. The chosen tab is
+underlined in line-blue. Red marks what would fail to start or what
+reaches beyond this Mac: a reference to a tag that does not exist, a port
+taken, a port open to the network, an inbound that takes over the system's
+network.

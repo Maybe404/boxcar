@@ -36,10 +36,11 @@
   ```sh
   TAGS=$(tr -d '\n' < "$(go list -m -f '{{.Dir}}' github.com/sagernet/sing-box)/release/DEFAULT_BUILD_TAGS_OTHERS" | tr ',' '\n' | grep -v -e badlinkname -e tfogo | paste -sd, -)
   CGO_ENABLED=0 go vet -tags "$TAGS" . && CGO_ENABLED=0 go test -tags "$TAGS" .
-  (cd frontend && bunx tsc --noEmit)
+  (cd frontend && bunx tsc --noEmit && bun test)
   ```
   然后用浏览器预览检查改到的界面（浅色和深色）。
 - 改了 Go 端绑定（`api.go` 里 `Box` 的方法或类型）后，运行 `CGO_ENABLED=0 GOFLAGS="-tags=$TAGS" go tool mygo generate` 重新生成 `frontend/src/mygo.ts`，并同步更新 `frontend/src/api.ts` 里预览用的合成实现。
+- 改了 go.mod 里的内核版本后，运行 `go run ./tools/configschema` 重新生成 `frontend/src/config/gen/`（表单用的 schema、中文字段说明、文档示例），`go test` 会检查版本是否一致。改了向导的写法后，`UPDATE=1 bun test` 更新 `testdata/wizard/` 的金样，Go 测试会用 `checkConfig` 校验它们。
 - 提交信息用英文 conventional commits；界面文字、文档、Issue 用中文。
 
 ## 命名与许可证
@@ -59,5 +60,7 @@
   - `subscription.go`：远程订阅
   - `tray.go`：菜单栏图标
   - `store.go`：配置文件和设置
+  - `refs.go`：静态引用检查（由 schema 的 `x-tag-reference` 驱动）
+  - `legacy.go`：从改名前的 SingBox 数据目录导入
   - `main.go`：窗口、菜单、退出流程
-- 前端：`frontend/`，React + Vite + Radix + cmdk + CodeMirror。设计规范见 `DESIGN.md`，产品说明见 `PRODUCT.md`，界面的设计契约见 `.impeccable/surfaces/`。
+- 前端：`frontend/`，React + Vite + Radix + cmdk + CodeMirror。可视化配置在 `frontend/src/config/`：`schema.ts`（读 schema）、`refs.ts`（引用，与 `refs.go` 同一套规则）、`SchemaForm.tsx`（全量表单）、`*Pane.tsx`（向导）。设计规范见 `DESIGN.md`，产品说明见 `PRODUCT.md`，界面的设计契约见 `.impeccable/surfaces/`。

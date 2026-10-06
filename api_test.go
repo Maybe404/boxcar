@@ -142,6 +142,7 @@ func TestTakeover(t *testing.T) {
 	for name, config := range map[string]string{
 		"tun":          `{"inbounds":[{"type":"tun","address":["172.19.0.1/30"],"auto_route":true}]}`,
 		"system proxy": `{"inbounds":[{"type":"mixed","listen":"127.0.0.1","listen_port":7890,"set_system_proxy":true}]}`,
+		"system time":  `{"ntp":{"enabled":true,"server":"time.apple.com","write_to_system":true}}`,
 	} {
 		if r := takeover(configJSON([]byte(config))); len(r) == 0 {
 			t.Errorf("%s: no takeover found", name)

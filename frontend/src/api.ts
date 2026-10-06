@@ -3,6 +3,7 @@
 // stands in for it with synthetic data, and the window says so.
 import { isMyGo } from "mygo-runtime";
 import { Box, events as goEvents } from "./mygo";
+import { parseConfig, stringifyConfig } from "./config/jsonc";
 import type {
   About,
   Activity,
@@ -10,6 +11,7 @@ import type {
   CheckResult,
   Connection,
   ImportResult,
+  LegacyData,
   LogLine,
   OutboundGroup,
   Profiles,
@@ -48,9 +50,55 @@ const sampleConfig = `{
   "outbounds": [
     { "type": "selector", "tag": "proxy", "outbounds": ["auto", "香港 01", "日本 01", "direct"] },
     { "type": "urltest", "tag": "auto", "outbounds": ["香港 01", "日本 01", "新加坡 01"] },
+    {
+      "type": "vless", "tag": "香港 01", "server": "hk1.example.com", "server_port": 443,
+      "uuid": "00000000-0000-4000-8000-000000000001", "flow": "xtls-rprx-vision",
+      "tls": { "enabled": true, "server_name": "hk1.example.com" }
+    },
+    { "type": "hysteria2", "tag": "日本 01", "server": "jp1.example.com", "server_port": 443, "password": "example", "tls": { "enabled": true } },
+    { "type": "trojan", "tag": "新加坡 01", "server": "sg1.example.com", "server_port": 443, "password": "example", "tls": { "enabled": true } },
     { "type": "direct", "tag": "direct" }
   ],
   "route": { "final": "proxy" }
+}
+`;
+
+// A fuller configuration, as subscriptions often are: rules, rule sets, DNS.
+const subscriptionConfig = `{
+  // Synthetic: the servers are example.com.
+  "log": { "level": "warn" },
+  "dns": {
+    "servers": [
+      { "type": "https", "tag": "dns-cn", "server": "223.5.5.5" },
+      { "type": "https", "tag": "dns-remote", "server": "1.1.1.1", "detour": "proxy" }
+    ],
+    "rules": [{ "rule_set": "geosite-cn", "action": "route", "server": "dns-cn" }],
+    "final": "dns-remote"
+  },
+  "inbounds": [
+    { "type": "mixed", "tag": "mixed-in", "listen": "127.0.0.1", "listen_port": 7890 }
+  ],
+  "outbounds": [
+    { "type": "selector", "tag": "proxy", "outbounds": ["香港 01", "日本 01"] },
+    { "type": "vless", "tag": "香港 01", "server": "hk1.example.com", "server_port": 443, "uuid": "00000000-0000-4000-8000-000000000001" },
+    { "type": "shadowsocks", "tag": "日本 01", "server": "jp1.example.com", "server_port": 8388, "method": "2022-blake3-aes-128-gcm", "password": "example" },
+    { "type": "direct", "tag": "direct" }
+  ],
+  "route": {
+    "rules": [
+      { "action": "sniff" },
+      { "protocol": "dns", "action": "hijack-dns" },
+      { "ip_is_private": true, "outbound": "direct" },
+      { "domain_suffix": ["github.com", "githubusercontent.com"], "outbound": "proxy" },
+      { "rule_set": ["geosite-cn", "geoip-cn"], "action": "route", "outbound": "direct" }
+    ],
+    "rule_set": [
+      { "type": "remote", "tag": "geosite-cn", "format": "binary", "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs" },
+      { "type": "remote", "tag": "geoip-cn", "format": "binary", "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs" }
+    ],
+    "final": "proxy",
+    "default_domain_resolver": "dns-cn"
+  }
 }
 `;
 
@@ -72,6 +120,7 @@ function makePreview() {
   let mode = "Rule";
   let systemProxy = false;
   let loginItem = false;
+  let legacyOffer = new URLSearchParams(location.search).has("legacy");
   const logLines: LogLine[] = [];
   const activity: Activity[] = [];
   let theme: Theme = "system";
@@ -116,7 +165,7 @@ function makePreview() {
       },
     ],
   };
-  const files: Record<string, string> = { 本地代理示例: sampleConfig, 机场订阅: sampleConfig };
+  const files: Record<string, string> = { 本地代理示例: sampleConfig, 机场订阅: subscriptionConfig };
   const closed: Connection[] = [];
 
   const bump = () => logs.emit(++version);
@@ -320,15 +369,20 @@ function makePreview() {
       files[name] = content;
     },
     async checkProfile(content: string): Promise<CheckResult> {
-      try {
-        JSON.parse(content);
-        return { ok: true, warnings: [] };
-      } catch (err) {
-        return { ok: false, error: String(err), warnings: [] };
-      }
+      await wait(200);
+      const parsed = parseConfig(content);
+      if (!parsed.ok) return { ok: false, error: parsed.error, warnings: [], problems: [] };
+      // The same static check as the app's; the build of the core is not previewed.
+      const { checkRefs } = await import("./config/refs");
+      const problems = checkRefs(parsed.value);
+      const fatal = problems.filter((p) => p.fatal).length;
+      if (fatal) return { ok: false, error: `有 ${fatal} 处引用不存在或标签重复，启动时会失败`, warnings: [], problems };
+      return { ok: true, warnings: [], problems };
     },
     async formatProfile(content: string) {
-      return JSON.stringify(JSON.parse(content), null, 2) + "\n";
+      const parsed = parseConfig(content);
+      if (!parsed.ok) throw new Error(parsed.error);
+      return stringifyConfig(parsed.value);
     },
     async newProfile() {
       let name = "新配置";
@@ -375,6 +429,26 @@ function makePreview() {
     async setActive(name: string) {
       profiles.active = name;
       state.emit(snapshot());
+    },
+    async legacyData(): Promise<LegacyData> {
+      // Shown in the preview with ?legacy.
+      return { available: legacyOffer, dir: "~/Library/Application Support/SingBox", profiles: ["家里", "机场订阅"] };
+    },
+    async importLegacy(): Promise<ImportResult> {
+      legacyOffer = false;
+      await wait(300);
+      // As the app does: a name taken gets a number.
+      const names = ["家里", "机场订阅"].map((base) => {
+        let name = base;
+        for (let i = 2; files[name] !== undefined; i++) name = `${base} ${i}`;
+        files[name] = sampleConfig;
+        profiles.items.push({ name, path: `~/…/profiles/${name}.json`, size: sampleConfig.length, modified: iso(Date.now()), remote: null });
+        return name;
+      });
+      return { names, failed: [] };
+    },
+    async dismissLegacy() {
+      legacyOffer = false;
     },
     async revealProfile() {},
     async openDataDir() {},

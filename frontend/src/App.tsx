@@ -3,7 +3,7 @@ import { AlertDialog } from "radix-ui";
 import { Command, Search } from "lucide-react";
 import { Toaster, toast } from "sonner";
 import { onFileDrop } from "mygo-runtime";
-import { box, errorText, events, preview } from "./api";
+import { box, errorText, events, preview, type LegacyData } from "./api";
 import { duration } from "./format";
 import { useGroups, useNow, useSnapshot } from "./hooks";
 import { pages, type PageId } from "./pages";
@@ -34,6 +34,11 @@ export function App() {
     dirty.current = d;
   }, []);
   const onImportHandled = useCallback(() => setImportPending(false), []);
+  // What the app left under its old name, offered once.
+  const [legacy, setLegacy] = useState<LegacyData | null>(null);
+  useEffect(() => {
+    box.legacyData().then((d) => d.available && setLegacy(d), () => {});
+  }, []);
 
   const setPage = useCallback((p: PageId) => {
     setPageNow((current) => {
@@ -191,6 +196,57 @@ export function App() {
               <AlertDialog.Cancel asChild>
                 <button className="btn primary">留下</button>
               </AlertDialog.Cancel>
+            </div>
+          </AlertDialog.Content>
+        </AlertDialog.Portal>
+      </AlertDialog.Root>
+      <AlertDialog.Root
+        open={legacy !== null}
+        onOpenChange={(open) => {
+          // Esc declines, as 不用了 does: the offer is made once.
+          if (open) return;
+          box.dismissLegacy();
+          setLegacy(null);
+        }}
+      >
+        <AlertDialog.Portal>
+          <AlertDialog.Overlay className="overlay" />
+          <AlertDialog.Content className="dialog">
+            <AlertDialog.Title asChild>
+              <h2>从旧版导入配置？</h2>
+            </AlertDialog.Title>
+            <AlertDialog.Description asChild>
+              <p>
+                改名前的 SingBox 在 <span className="selectable">{legacy?.dir}</span> 里留有 {legacy?.profiles.length} 个配置（{legacy?.profiles.slice(0, 4).join("、")}
+                {(legacy?.profiles.length ?? 0) > 4 ? "…" : ""}）。导入会复制配置、订阅设置、启动时使用的配置和主题，旧目录保持不变。
+              </p>
+            </AlertDialog.Description>
+            <div className="actions">
+              <button
+                className="btn"
+                onClick={() => {
+                  box.dismissLegacy();
+                  setLegacy(null);
+                }}
+              >
+                不用了
+              </button>
+              <button
+                className="btn primary"
+                onClick={async () => {
+                  setLegacy(null);
+                  try {
+                    const r = await box.importLegacy();
+                    toast.success(r.names.length ? `已从旧版导入 ${r.names.length} 个配置` : "旧版的配置已经都在了");
+                    if (r.failed.length) toast.error("有配置没能导入", { description: r.failed.join("\n") });
+                    setProfilesVersion((v) => v + 1);
+                  } catch (err) {
+                    toast.error("导入失败", { description: errorText(err) });
+                  }
+                }}
+              >
+                导入
+              </button>
             </div>
           </AlertDialog.Content>
         </AlertDialog.Portal>

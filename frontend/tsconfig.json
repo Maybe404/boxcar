@@ -14,5 +14,7 @@
     "types": ["vite/client"],
     "paths": { "mygo-runtime": ["./vendor/mygo-runtime/index.ts"] }
   },
-  "include": ["src", "vendor"]
+  "include": ["src", "vendor"],
+  // The tests run in bun (bun test), with its own types.
+  "exclude": ["src/**/*.test.ts"]
 }

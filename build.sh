@@ -25,6 +25,9 @@ GO
 # sets itself.
 TAGS=$(tr -d '\n' < "$CORE_DIR/release/DEFAULT_BUILD_TAGS_OTHERS" | tr ',' '\n' | grep -v -e '^badlinkname$' -e '^tfogo_checklinkname0$' | paste -sd, -)
 
+# The schema and the documentation of the fields, for the visual editor.
+go run ./tools/configschema
+
 echo "sing-box $VERSION"
 echo "tags: $TAGS"
 CGO_ENABLED=0 GOFLAGS="-tags=$TAGS" go tool mygo build "$@"
