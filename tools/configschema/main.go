@@ -353,12 +353,20 @@ func clean(lines []string) Field {
 // coreName is the name the interface does not use; in prose it is 内核.
 var coreName = regexp.MustCompile(`(^|[^\w./-])sing-box($|[^\w./-])`)
 
+var (
+	hanBefore = regexp.MustCompile(`(\p{Han}) 内核`)
+	hanAfter  = regexp.MustCompile(`内核 (\p{Han})`)
+)
+
 // renameCore calls the core 内核 in prose, and leaves code and addresses
 // as they are: a command, a value or a URL keeps working only as written.
 func renameCore(line string) string {
 	parts := strings.Split(line, "`")
 	for i := 0; i < len(parts); i += 2 {
 		parts[i] = coreName.ReplaceAllString(parts[i], "${1}内核${2}")
+		// No space between it and Chinese, as there was around the name.
+		parts[i] = hanBefore.ReplaceAllString(parts[i], "${1}内核")
+		parts[i] = hanAfter.ReplaceAllString(parts[i], "内核${1}")
 	}
 	return strings.Join(parts, "`")
 }

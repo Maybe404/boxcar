@@ -1009,3 +1009,8 @@ input.check {
     grid-template-columns: 1fr;
   }
 }
+
+/* A field of an older version, kept as written. */
+.f-row.deprecated .f-note {
+  color: var(--danger);
+}

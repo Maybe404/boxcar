@@ -127,6 +127,8 @@ function makePreview() {
   const logLines: LogLine[] = [];
   const activity: Activity[] = [];
   let theme: Theme = "system";
+  // What went through each node since the start, made up.
+  const idle = { upload: 0, download: 0, connections: 0, open: 0 };
   const groups: OutboundGroup[] = [
     {
       tag: "proxy",
@@ -134,13 +136,13 @@ function makePreview() {
       selected: "香港 01",
       selectable: true,
       items: [
-        { tag: "auto", type: "urltest", delay: 0 },
-        { tag: "香港 01", type: "vless", delay: 46 },
-        { tag: "香港 02", type: "vless", delay: 58 },
-        { tag: "日本 01", type: "hysteria2", delay: 91 },
-        { tag: "新加坡 01", type: "trojan", delay: 133 },
-        { tag: "美国 01", type: "shadowsocks", delay: 412 },
-        { tag: "direct", type: "direct", delay: 0 },
+        { tag: "auto", type: "urltest", delay: 0, traffic: { upload: 2_710_000, download: 104_200_000, connections: 245, open: 5 } },
+        { tag: "香港 01", type: "vless", delay: 46, traffic: { upload: 2_400_000, download: 96_000_000, connections: 214, open: 5 } },
+        { tag: "香港 02", type: "vless", delay: 58, traffic: idle },
+        { tag: "日本 01", type: "hysteria2", delay: 91, traffic: { upload: 310_000, download: 8_200_000, connections: 31, open: 0 } },
+        { tag: "新加坡 01", type: "trojan", delay: 133, traffic: idle },
+        { tag: "美国 01", type: "shadowsocks", delay: 412, traffic: idle },
+        { tag: "direct", type: "direct", delay: 0, traffic: { upload: 120_000, download: 1_900_000, connections: 58, open: 1 } },
       ],
     },
     {
@@ -149,9 +151,9 @@ function makePreview() {
       selected: "香港 01",
       selectable: false,
       items: [
-        { tag: "香港 01", type: "vless", delay: 46 },
-        { tag: "日本 01", type: "hysteria2", delay: 91 },
-        { tag: "新加坡 01", type: "trojan", delay: 1290 },
+        { tag: "香港 01", type: "vless", delay: 46, traffic: { upload: 2_400_000, download: 96_000_000, connections: 214, open: 5 } },
+        { tag: "日本 01", type: "hysteria2", delay: 91, traffic: { upload: 310_000, download: 8_200_000, connections: 31, open: 0 } },
+        { tag: "新加坡 01", type: "trojan", delay: 1290, traffic: idle },
       ],
     },
   ];

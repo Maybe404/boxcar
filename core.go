@@ -121,6 +121,8 @@ type GroupItem struct {
 	Delay int    `json:"delay"` // in milliseconds, 0 when untested
 	// TestedAt is when the delay was measured.
 	TestedAt time.Time `json:"testedAt,omitzero"`
+	// Traffic is what went through it since the core started.
+	Traffic OutboundTraffic `json:"traffic"`
 }
 
 // OutboundGroup is a group of outbounds, as a selector or a urltest.
@@ -611,10 +613,38 @@ func (c *boxCore) Warnings() []Warning {
 
 func (c *boxCore) Groups() []OutboundGroup {
 	c.mu.Lock()
-	manager, history := c.outbound, c.history
+	manager, history, tracked := c.outbound, c.history, c.tracked
 	c.mu.Unlock()
-	if manager == nil {
+	if manager == nil || tracked == nil {
 		return nil
+	}
+	traffic := tracked.outbounds()
+	// A group's traffic is that of the outbounds it reaches, each once: a
+	// node in a group and in a group of it went out once. Connections
+	// name the node they went out through.
+	through := func(tag string) OutboundTraffic {
+		reached := map[string]bool{}
+		var walk func(tag string)
+		walk = func(tag string) {
+			if reached[tag] {
+				return
+			}
+			reached[tag] = true
+			if it, loaded := manager.Outbound(tag); loaded {
+				if g, isGroup := it.(adapter.OutboundGroup); isGroup {
+					for _, member := range g.All() {
+						walk(member)
+					}
+				}
+			}
+		}
+		walk(tag)
+		var t OutboundTraffic
+		for tag := range reached {
+			m := traffic[tag]
+			t.Upload, t.Download, t.Connections, t.Open = t.Upload+m.Upload, t.Download+m.Download, t.Connections+m.Connections, t.Open+m.Open
+		}
+		return t
 	}
 	var groups []OutboundGroup
 	for _, it := range manager.Outbounds() {
@@ -632,7 +662,7 @@ func (c *boxCore) Groups() []OutboundGroup {
 			if !loaded {
 				continue
 			}
-			gi := GroupItem{Tag: tag, Type: item.Type()}
+			gi := GroupItem{Tag: tag, Type: item.Type(), Traffic: through(tag)}
 			if h := history.LoadURLTestHistory(group.RealTag(item, N.NetworkTCP)); h != nil {
 				gi.Delay, gi.TestedAt = int(h.Delay), h.Time.Truncate(time.Millisecond)
 			}

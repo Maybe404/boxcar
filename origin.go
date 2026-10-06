@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sync"
 	"time"
 )
 
@@ -111,6 +112,7 @@ func (s *store) ensureSources() {
 // renameSource follows a profile renamed. Without its source file, the
 // origin goes too, and the source is made again from the profile.
 func (s *store) renameSource(from, to string) {
+	s.forgetEdited(from)
 	if err := os.Rename(s.sourcePath(from), s.sourcePath(to)); err != nil {
 		s.update(func(set *settings) { delete(set.Origins, from) })
 		s.ensureSources()
@@ -124,8 +126,16 @@ func (s *store) renameSource(from, to string) {
 	})
 }
 
+// forgetEdited drops what was known of a profile renamed or removed.
+func (s *store) forgetEdited(name string) {
+	editedMu.Lock()
+	delete(editedCache, s.path(name))
+	editedMu.Unlock()
+}
+
 // removeSource forgets the source of a profile removed.
 func (s *store) removeSource(name string) {
+	s.forgetEdited(name)
 	os.Remove(s.sourcePath(name))
 	s.update(func(set *settings) { delete(set.Origins, name) })
 }
@@ -133,6 +143,20 @@ func (s *store) removeSource(name string) {
 // edited reports whether a profile differs from its source in what it
 // says: formatting and comments aside.
 func (s *store) edited(name string) bool {
+	// Read again only when either file changed: a subscription may be
+	// megabytes, and the list asks for every profile.
+	ci, err1 := os.Stat(s.path(name))
+	si, err2 := os.Stat(s.sourcePath(name))
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	key := editedKey{ci.ModTime(), ci.Size(), si.ModTime(), si.Size()}
+	editedMu.Lock()
+	cached, ok := editedCache[s.path(name)]
+	editedMu.Unlock()
+	if ok && cached.key == key {
+		return cached.edited
+	}
 	current, err := s.read(name)
 	if err != nil {
 		return false
@@ -141,8 +165,29 @@ func (s *store) edited(name string) bool {
 	if err != nil {
 		return false
 	}
-	return !sameConfig(current, source)
+	edited := !sameConfig(current, source)
+	editedMu.Lock()
+	editedCache[s.path(name)] = editedEntry{key, edited}
+	editedMu.Unlock()
+	return edited
 }
+
+type editedKey struct {
+	currentTime time.Time
+	currentSize int64
+	sourceTime  time.Time
+	sourceSize  int64
+}
+
+type editedEntry struct {
+	key    editedKey
+	edited bool
+}
+
+var (
+	editedMu    sync.Mutex
+	editedCache = map[string]editedEntry{}
+)
 
 // sameConfig reports whether two configurations say the same, read as the
 // core reads them, comments allowed.

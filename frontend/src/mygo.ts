@@ -181,6 +181,8 @@ export interface GroupItem {
   delay: number;
   /** TestedAt is when the delay was measured. */
   testedAt?: string;
+  /** Traffic is what went through it since the core started. */
+  traffic: OutboundTraffic;
 }
 
 /**
@@ -243,6 +245,15 @@ export interface OutboundGroup {
   selected: string;
   selectable: boolean;
   items: GroupItem[];
+}
+
+/** OutboundTraffic is what went through an outbound while the core ran. */
+export interface OutboundTraffic {
+  upload: number;
+  download: number;
+  connections: number;
+  /** Open are the connections through it now. */
+  open: number;
 }
 
 /**

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Zap } from "lucide-react";
 import { toast } from "sonner";
+import { bytes } from "../format";
 import { box, errorText, type OutboundGroup, type Snapshot } from "../api";
 import { Stopped } from "../components/Stopped";
 
@@ -113,7 +114,15 @@ function Group({ group, refresh, query }: { group: OutboundGroup; refresh: () =>
               <span className="pin" />
               <span className="label">
                 <b>{it.tag}</b>
-                <span>{it.type}</span>
+                <span>
+                  {it.type}
+                  {it.traffic.connections > 0 && (
+                    <span title={`启动以来 ${it.traffic.connections} 个连接，正在使用 ${it.traffic.open} 个`}>
+                      {" "}
+                      · ↓ {bytes(it.traffic.download)} ↑ {bytes(it.traffic.upload)}
+                    </span>
+                  )}
+                </span>
               </span>
               <span
                 className={`delay${it.delay >= 800 ? " slow" : ""}`}

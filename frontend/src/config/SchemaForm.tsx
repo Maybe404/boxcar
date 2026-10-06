@@ -101,18 +101,28 @@ export function ObjectFields({ node, value, onChange, contexts, path, only, hide
           <VariantField key={d.key} disc={d} onChange={(v) => onChange(switchVariant(node, obj, d, v))} contexts={contexts} ruleKind={kind} />
         ))}
       {shown.map(field)}
-      {unknown.map((k) => (
-        <div className="f-row" key={k}>
-          <div className="f-head">
-            <span className="f-label">{k}</span>
-            <span className="f-note">表单不认识这个字段，原样保留</span>
-            <button className="f-clear" title="删除" onClick={() => set(k, undefined)}>
-              <X size={12} />
-            </button>
+      {unknown.map((k) => {
+        // Left out of the schema, a field of an old version is still in
+        // the documentation, with its notice.
+        const old = fieldDoc(contexts, k).doc;
+        return (
+          <div className={`f-row${old?.deprecated ? " deprecated" : ""}`} key={k}>
+            <div className="f-head">
+              <span className="f-label">{k}</span>
+              <span className="f-note">{!old?.deprecated
+                  ? "表单不认识这个字段，原样保留"
+                  : old.deprecated.includes("移除")
+                    ? `${old.deprecated}，内核不再接受这个字段，按说明改用新的写法`
+                    : `${old.deprecated}，建议按说明改用新的写法`}</span>
+              <button className="f-clear" title="删除" onClick={() => set(k, undefined)}>
+                <X size={12} />
+              </button>
+            </div>
+            {old?.text && <Desc text={old.text} />}
+            <RawValue value={obj[k]} onChange={(v) => set(k, v)} />
           </div>
-          <RawValue value={obj[k]} onChange={(v) => set(k, v)} />
-        </div>
-      ))}
+        );
+      })}
       {shape.map && <MapField node={shape.map} keys={mapKeys} obj={obj} onChange={onChange} contexts={contexts} path={path} />}
       {rest.length > 0 &&
         (more ? (

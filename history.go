@@ -55,12 +55,14 @@ type connHistory struct {
 	records []*connRecord
 	byID    map[uuid.UUID]*connRecord
 	seq     int64
+	// closed are the totals of the closed connections, by outbound.
+	closed map[string]OutboundTraffic
 }
 
 var _ adapter.ConnectionTracker = (*connHistory)(nil)
 
 func newConnHistory() *connHistory {
-	return &connHistory{byID: map[uuid.UUID]*connRecord{}}
+	return &connHistory{byID: map[uuid.UUID]*connRecord{}, closed: map[string]OutboundTraffic{}}
 }
 
 type metadataTracker interface {
@@ -156,10 +158,54 @@ func (f *flowRecord) CloseFlow(tun.FlowCloseReason) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if r.closedAt.IsZero() {
-		r.closedAt = time.Now()
-		r.upload, r.download = r.meta.Upload.Load(), r.meta.Download.Load()
-		r.uploadRate, r.downloadRate, r.handle = 0, 0, nil
+		h.closeLocked(r, time.Now())
 	}
+}
+
+// closeLocked marks a record closed with its final totals, which count
+// toward its outbound's.
+func (h *connHistory) closeLocked(r *connRecord, now time.Time) {
+	r.closedAt = now
+	r.upload, r.download = r.meta.Upload.Load(), r.meta.Download.Load()
+	r.uploadRate, r.downloadRate, r.handle = 0, 0, nil
+	t := h.closed[r.meta.Outbound]
+	t.Upload += r.upload
+	t.Download += r.download
+	t.Connections++
+	h.closed[r.meta.Outbound] = t
+}
+
+// OutboundTraffic is what went through an outbound while the core ran.
+type OutboundTraffic struct {
+	Upload      int64 `json:"upload"`
+	Download    int64 `json:"download"`
+	Connections int   `json:"connections"`
+	// Open are the connections through it now.
+	Open int `json:"open"`
+}
+
+// outbounds returns the traffic of each outbound since the core started:
+// the closed connections, kept apart from the records, which are trimmed,
+// and the open ones as they are now.
+func (h *connHistory) outbounds() map[string]OutboundTraffic {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	out := make(map[string]OutboundTraffic, len(h.closed))
+	for tag, t := range h.closed {
+		out[tag] = t
+	}
+	for _, r := range h.records {
+		if !r.closedAt.IsZero() {
+			continue
+		}
+		t := out[r.meta.Outbound]
+		t.Upload += r.meta.Upload.Load()
+		t.Download += r.meta.Download.Load()
+		t.Connections++
+		t.Open++
+		out[r.meta.Outbound] = t
+	}
+	return out
 }
 
 // closeFlow closes a flow of the history by its ID, reporting whether
@@ -192,9 +238,7 @@ func (h *connHistory) reconcile(traffic *trafficcontrol.Manager, now time.Time) 
 		up, down := r.meta.Upload.Load(), r.meta.Download.Load()
 		// A flow closes through its tracker.
 		if !r.flow && traffic.Connection(r.meta.ID) == nil {
-			r.closedAt = now
-			r.upload, r.download = up, down
-			r.uploadRate, r.downloadRate = 0, 0
+			h.closeLocked(r, now)
 			continue
 		}
 		r.uploadRate, r.downloadRate = max(up-r.lastUp, 0), max(down-r.lastDown, 0)
@@ -208,9 +252,7 @@ func (h *connHistory) closeAll(now time.Time) {
 	defer h.mu.Unlock()
 	for _, r := range h.records {
 		if r.closedAt.IsZero() {
-			r.closedAt = now
-			r.upload, r.download = r.meta.Upload.Load(), r.meta.Download.Load()
-			r.handle = nil
+			h.closeLocked(r, now)
 		}
 	}
 }

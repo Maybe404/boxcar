@@ -123,3 +123,19 @@ func TestHistoryFollowsFlows(t *testing.T) {
 		t.Fatalf("closed %+v", closed)
 	}
 }
+
+func TestOutboundTrafficOutlivesTheRecords(t *testing.T) {
+	h := newConnHistory()
+	out := namedOutbound{tag: "hk"}
+	flow := h.RoutedFlow(context.Background(), adapter.InboundContext{OutboundChain: []adapter.Outbound{out}}, nil, out)
+	flow.CountForward(10)
+	flow.CountReverse(1000)
+	flow.CloseFlow(0)
+	open := h.RoutedFlow(context.Background(), adapter.InboundContext{OutboundChain: []adapter.Outbound{out}}, nil, out)
+	open.CountReverse(5)
+	// The closed record goes; its traffic stays.
+	h.clearClosed()
+	if got := h.outbounds()["hk"]; got != (OutboundTraffic{Upload: 10, Download: 1005, Connections: 2, Open: 1}) {
+		t.Fatalf("traffic %+v", got)
+	}
+}
