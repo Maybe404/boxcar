@@ -1,10 +1,11 @@
 #!/bin/sh
 # Builds Boxcar.app and a disk image into build/, with the sing-box core
-# linked in. Building runs nothing: the app starts the core only when the
-# user starts it.
+# linked in, or Boxcar.exe for Windows. Building runs nothing: the app
+# starts the core only when the user starts it.
 #
 #	./build.sh               the app, for this Mac's architecture
 #	./build.sh -skip-dmg     without the disk image
+#	./build.sh -windows      Boxcar.exe for Windows, amd64 and arm64
 set -e
 cd "$(dirname "$0")"
 [ -d frontend/node_modules ] || (cd frontend && bun install)
@@ -23,7 +24,24 @@ GO
 
 # Without the tags that need -ldflags=-checklinkname=0, which mygo build
 # sets itself.
-TAGS=$(tr -d '\n' < "$CORE_DIR/release/DEFAULT_BUILD_TAGS_OTHERS" | tr ',' '\n' | grep -v -e '^badlinkname$' -e '^tfogo_checklinkname0$' | paste -sd, -)
+TAGS_FILE=DEFAULT_BUILD_TAGS_OTHERS
+# -windows anywhere among the arguments; the rest go to mygo build.
+WINDOWS=
+for arg in "$@"; do
+	shift
+	if [ "$arg" = "-windows" ]; then
+		WINDOWS=1
+	else
+		set -- "$@" "$arg"
+	fi
+done
+if [ -n "$WINDOWS" ]; then
+	TAGS_FILE=DEFAULT_BUILD_TAGS_WINDOWS
+	set -- --platform windows/amd64,windows/arm64 "$@"
+fi
+# On Windows also without the NaiveProxy outbound, which needs
+# libcronet.dll beside the program: not shipped yet.
+TAGS=$(tr -d '\n' < "$CORE_DIR/release/$TAGS_FILE" | tr ',' '\n' | grep -v -e '^badlinkname$' -e '^tfogo_checklinkname0$' -e '^with_naive_outbound$' -e '^with_purego$' | paste -sd, -)
 
 # The schema and the documentation of the fields, for the visual editor.
 go run ./tools/configschema

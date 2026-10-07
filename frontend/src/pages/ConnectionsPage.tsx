@@ -13,6 +13,7 @@ import { bytes, clock, duration, rate } from "../format";
 import { useNow, usePoll } from "../hooks";
 import { Route } from "../components/Route";
 import { Stopped } from "../components/Stopped";
+import { osName } from "../platform";
 
 type Tab = "open" | "closed" | "dns" | "activity";
 type Sort = "time" | "traffic" | "host";
@@ -495,7 +496,7 @@ function DNSList({ query, running }: { query: string; running: boolean }) {
                 toast.error("没能清空 DNS 缓存", { description: errorText(err) });
               }
             }}
-            title="清空内核的 DNS 缓存，之后的查询重新向服务器请求。不会清空 macOS 自己的 DNS 缓存。"
+            title={`清空内核的 DNS 缓存，之后的查询重新向服务器请求。不会清空 ${osName} 自己的 DNS 缓存。`}
           >
             清除 DNS 缓存
           </button>

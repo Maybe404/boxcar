@@ -1,8 +1,8 @@
 # Boxcar
 
-把强大的代理内核装进一个开箱即用的 macOS App：不用另装内核、不用手动启动、不用读懂冗长的配置文件。
+把强大的代理内核装进一个开箱即用的 macOS / Windows App：不用另装内核、不用手动启动、不用读懂冗长的配置文件。
 
-Boxcar is a macOS app that brings a capable proxy core to everyday users, with a friendly interface instead of hand-written configuration.
+Boxcar is a macOS and Windows app that brings a capable proxy core to everyday users, with a friendly interface instead of hand-written configuration.
 
 > Boxcar 是独立项目，内核使用 [sing-box](https://github.com/SagerNet/sing-box)（GPL-3.0-or-later）。本项目与 sing-box 及其作者没有关联，也未获得其背书。
 
@@ -26,7 +26,8 @@ Boxcar is a macOS app that brings a capable proxy core to everyday users, with a
 ```sh
 cd frontend && bun install && cd ..
 ./build.sh                    # build/darwin-arm64/Boxcar.app 与安装包
-bun run --cwd frontend dev    # 只在浏览器里预览界面（合成数据）
+./build.sh -windows           # build/windows-{amd64,arm64}/Boxcar.exe（可以在 Mac 上交叉编译）
+bun run --cwd frontend dev    # 只在浏览器里预览界面（合成数据）；地址加 ?platform=windows 看 Windows 的样子
 go test -tags "$(tr -d '\n' < "$(go list -m -f '{{.Dir}}' github.com/sagernet/sing-box)/release/DEFAULT_BUILD_TAGS_OTHERS")" .
 bun run --cwd frontend test   # 可视化配置的单元测试
 go run ./tools/configschema   # 升级内核后：重新生成表单用的 schema 和中文字段说明
@@ -36,7 +37,7 @@ go run ./tools/configschema   # 升级内核后：重新生成表单用的 schem
 
 ## 数据
 
-`~/Library/Application Support/Boxcar`：`profiles/` 是配置文件，`settings.json` 是设置，`work/` 是内核的工作目录（缓存文件等相对路径）。
+macOS 是 `~/Library/Application Support/Boxcar`，Windows 是 `%APPDATA%\Boxcar`：`profiles/` 是配置文件，`settings.json` 是设置，`work/` 是内核的工作目录（缓存文件等相对路径）。
 
 ## 许可证
 

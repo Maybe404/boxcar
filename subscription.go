@@ -7,8 +7,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os/exec"
-	"strconv"
 	"strings"
 	"time"
 
@@ -59,7 +57,7 @@ func fetchProfile(ctx context.Context, link string) ([]byte, error) {
 		return nil, err
 	}
 	// Some providers answer with sing-box configurations for this.
-	req.Header.Set("User-Agent", fmt.Sprintf("Boxcar/%s (sing-box %s; macOS)", appVersion(), C.Version))
+	req.Header.Set("User-Agent", fmt.Sprintf("Boxcar/%s (sing-box %s; %s)", appVersion(), C.Version, strings.TrimSpace(osName())))
 	resp, err := client.Do(req)
 	if err != nil {
 		// Without the address, which may carry the subscription's token:
@@ -82,35 +80,4 @@ func fetchProfile(ctx context.Context, link string) ([]byte, error) {
 		return nil, errors.New("下载的文件超过 32 MB，不像是配置文件")
 	}
 	return content, nil
-}
-
-// systemHTTPProxy returns the system's proxy for a request, as scutil
-// reports it: Go's own lookup reads only environment variables.
-func systemHTTPProxy(req *http.Request) (*url.URL, error) {
-	out, err := exec.Command("/usr/sbin/scutil", "--proxy").Output()
-	if err != nil {
-		return nil, nil
-	}
-	values := map[string]string{}
-	for line := range strings.SplitSeq(string(out), "\n") {
-		key, value, ok := strings.Cut(line, ":")
-		if ok {
-			values[strings.TrimSpace(key)] = strings.TrimSpace(value)
-		}
-	}
-	prefix := "HTTP"
-	if req.URL.Scheme == "https" {
-		prefix = "HTTPS"
-	}
-	if values[prefix+"Enable"] != "1" || values[prefix+"Proxy"] == "" {
-		if values["SOCKSEnable"] == "1" && values["SOCKSProxy"] != "" {
-			return &url.URL{Scheme: "socks5", Host: values["SOCKSProxy"] + ":" + values["SOCKSPort"]}, nil
-		}
-		return nil, nil
-	}
-	port, _ := strconv.Atoi(values[prefix+"Port"])
-	if port == 0 {
-		port = 80
-	}
-	return &url.URL{Scheme: "http", Host: values[prefix+"Proxy"] + ":" + strconv.Itoa(port)}, nil
 }

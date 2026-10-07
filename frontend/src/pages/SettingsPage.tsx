@@ -3,6 +3,7 @@ import { AlertDialog, Dialog, Switch, ToggleGroup } from "radix-ui";
 import { toast } from "sonner";
 import { box, errorText, type About, type RuleInfo, type Snapshot, type Theme } from "../api";
 import { DNSQuery } from "../components/DNSQuery";
+import { fileManager, isWindows, mod, osName, shift, trayPlace } from "../platform";
 
 export function SettingsPage({ snap }: { snap: Snapshot }) {
   const running = snap.status === "running";
@@ -40,7 +41,7 @@ export function SettingsPage({ snap }: { snap: Snapshot }) {
             <span>
               {snap.systemProxy.active
                 ? `系统代理正指向内核（${snap.systemProxy.address}）。关闭或停止时恢复成原来的设置。`
-                : "内核运行时，把 macOS 系统代理指向它的 mixed / http 入站；关闭或停止时恢复原来的设置（例如 Surge 的）。"}
+                : `内核运行时，把 ${osName} 系统代理指向它的 mixed / http 入站；关闭或停止时恢复原来的设置${isWindows ? "" : "（例如 Surge 的）"}。`}
             </span>
           </div>
           <Switch.Root className="switch control" checked={snap.systemProxy.enabled} onCheckedChange={setProxy} aria-label="设为系统代理">
@@ -55,7 +56,7 @@ export function SettingsPage({ snap }: { snap: Snapshot }) {
         <div className="setting">
           <div className="what">
             主题
-            <span>跟随系统时，随 macOS 的浅色和深色外观切换。</span>
+            <span>跟随系统时，随 {osName} 的浅色和深色外观切换。</span>
           </div>
           <ToggleGroup.Root
             className="segmented control"
@@ -76,7 +77,7 @@ export function SettingsPage({ snap }: { snap: Snapshot }) {
         <div className="setting">
           <div className="what">
             登录时打开 Boxcar
-            <span>只打开 App 和菜单栏图标，不会自动启动内核。</span>
+            <span>只打开 App 和{trayPlace}图标，不会自动启动内核。</span>
           </div>
           <Switch.Root
             className="switch control"
@@ -154,7 +155,7 @@ export function SettingsPage({ snap }: { snap: Snapshot }) {
             <span className="selectable">{about?.dataDir}</span>
           </div>
           <button className="btn control" onClick={() => box.openDataDir()}>
-            在访达中打开
+            在{fileManager}中打开
           </button>
         </div>
         <p className="faint" style={{ fontSize: 12, marginTop: 8 }}>
@@ -175,10 +176,10 @@ export function SettingsPage({ snap }: { snap: Snapshot }) {
 
       <section>
         <h3 className="section-title">快捷键</h3>
-        <Row label="命令栏：切换节点、模式、页面和配置" value="⌘K" />
-        <Row label="启动或停止" value="⌘⇧S" />
-        <Row label="页面" value="⌘1 – ⌘5" />
-        <Row label="导入配置" value="⌘O" />
+        <Row label="命令栏：切换节点、模式、页面和配置" value={`${mod}K`} />
+        <Row label="启动或停止" value={`${mod}${shift}S`} />
+        <Row label="页面" value={`${mod}1 – ${mod}5`} />
+        <Row label="导入配置" value={`${mod}O`} />
       </section>
 
       <AlertDialog.Root open={askProxy !== null} onOpenChange={(open) => !open && setAskProxy(null)}>
@@ -190,7 +191,7 @@ export function SettingsPage({ snap }: { snap: Snapshot }) {
             </AlertDialog.Title>
             <AlertDialog.Description asChild>
               <p>
-                系统代理现在{askProxy && askProxy !== "未设置" ? `指向 ${askProxy}（可能是 Surge）` : "未设置"}。内核运行时，Safari 等走系统代理的应用会改走内核，不再经过 Surge 的分流；关闭这个开关或停止内核时，会恢复成现在的设置。
+                系统代理现在{askProxy && askProxy !== "未设置" ? `指向 ${askProxy}${isWindows ? "" : "（可能是 Surge）"}` : "未设置"}。内核运行时，{isWindows ? "浏览器" : "Safari"} 等走系统代理的应用会改走内核，不再经过{isWindows ? "原来的代理" : " Surge "}的分流；关闭这个开关或停止内核时，会恢复成现在的设置。
               </p>
             </AlertDialog.Description>
             <div className="actions">

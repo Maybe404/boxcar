@@ -139,3 +139,10 @@ func TestOutboundTrafficOutlivesTheRecords(t *testing.T) {
 		t.Fatalf("traffic %+v", got)
 	}
 }
+
+func TestProcessNameOfAWindowsPath(t *testing.T) {
+	meta := newMeta(adapter.InboundContext{ProcessInfo: &adapter.ConnectionOwner{ProcessPaths: []string{`C:\Program Files\Google\Chrome\Application\chrome.exe`}}})
+	if c := toConnection(meta, time.Time{}, 0, 0); c.Process != "chrome.exe" {
+		t.Fatalf("process %q", c.Process)
+	}
+}

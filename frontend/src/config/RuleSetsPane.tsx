@@ -9,10 +9,11 @@ import { def } from "./schema";
 import { commonRuleSets, duplicateItem, ensureRuleSet, itemsOf, removeItem, replaceItem, addItem, uniqueTag } from "./ops";
 import { refsTo, tagsOf, tagsOfItem } from "./refs";
 import { getIn, isObject, omitKeys, setIn, type Json } from "./path";
+import { thisComputer } from "../platform";
 
 const kinds = [
   { type: "remote", name: "远程", detail: "从网址下载，定时更新" },
-  { type: "local", name: "本地文件", detail: "读取这台 Mac 上的文件" },
+  { type: "local", name: "本地文件", detail: `读取${thisComputer}上的文件` },
   { type: "inline", name: "内联", detail: "规则直接写在配置里" },
 ];
 

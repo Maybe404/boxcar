@@ -6,10 +6,14 @@ import { box } from "../api";
 
 const icons = new Map<string, Promise<string>>();
 
-/** The outermost app a path is in, as the app reads it: a helper shows its app. */
+/**
+ * The app a path is, as the app reads it: on macOS the outermost bundle,
+ * so that a helper shows its app's icon; on Windows the program itself.
+ */
 function bundleOf(path: string): string {
   const i = path.indexOf(".app/");
-  return i < 0 ? "" : path.slice(0, i + 4);
+  if (i >= 0) return path.slice(0, i + 4);
+  return /\.exe$/i.test(path) ? path.toLowerCase() : "";
 }
 
 function iconOf(path: string): Promise<string> {

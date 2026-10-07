@@ -193,14 +193,18 @@ func TestMissingInboundIsNotFatal(t *testing.T) {
 
 func TestMissingTypesFollowTheBuild(t *testing.T) {
 	all := []string{"with_quic", "with_wireguard", "with_tailscale", "with_dhcp", "with_acme", "with_naive_outbound", "with_cloudflared", "with_ccm", "with_ocm", "with_openconnect", "with_openvpn", "with_usbip"}
-	if m := missingTypes(all, true); len(m) != 0 {
+	if m := missingTypes("darwin", all, true); len(m) != 0 {
 		t.Fatalf("missing with every tag: %v", m)
 	}
-	m := missingTypes(all, false)
+	m := missingTypes("darwin", all, false)
 	if !slices.Equal(m, []string{"services/ccm", "services/usbip-client", "services/usbip-server"}) {
 		t.Fatalf("missing without cgo: %v", m)
 	}
-	if m := missingTypes(nil, false); !slices.Contains(m, "outbounds/naive") || !slices.Contains(m, "endpoints/wireguard") || !slices.Contains(m, "dns.servers/openvpn") {
+	// Windows builds them without cgo.
+	if m := missingTypes("windows", all, false); len(m) != 0 {
+		t.Fatalf("missing on Windows: %v", m)
+	}
+	if m := missingTypes("darwin", nil, false); !slices.Contains(m, "outbounds/naive") || !slices.Contains(m, "endpoints/wireguard") || !slices.Contains(m, "dns.servers/openvpn") {
 		t.Fatalf("missing without tags: %v", m)
 	}
 }

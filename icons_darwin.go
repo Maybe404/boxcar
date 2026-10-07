@@ -3,13 +3,74 @@
 package main
 
 import (
+	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
+	"time"
 	"unsafe"
 
 	"github.com/ebitengine/purego"
 	"github.com/ebitengine/purego/objc"
 )
+
+// iconKey is the outermost app bundle a program is in.
+func iconKey(path string) string { return bundleOf(path) }
+
+// iconStamp is when the bundle's Info.plist changed, which an update
+// rewrites; false when the app is gone.
+func iconStamp(bundle string) (time.Time, bool) {
+	info, err := os.Stat(filepath.Join(bundle, "Contents", "Info.plist"))
+	if err != nil {
+		return time.Time{}, false
+	}
+	return info.ModTime(), true
+}
+
+// drawIcon converts the bundle's .icns with sips, or asks AppKit for the
+// icon Finder shows, when it is only in the asset catalog.
+func drawIcon(bundle, tmp string) []byte {
+	icns := iconFile(bundle)
+	if icns == "" {
+		return workspaceIcon(bundle)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	tmp += ".png"
+	defer os.Remove(tmp)
+	if err := exec.CommandContext(ctx, "/usr/bin/sips", "-s", "format", "png", "-Z", "64", icns, "--out", tmp).Run(); err != nil {
+		return nil
+	}
+	data, err := os.ReadFile(tmp)
+	if err != nil {
+		return nil
+	}
+	return data
+}
+
+// iconFile finds the .icns of a bundle, as its Info.plist names it.
+func iconFile(bundle string) string {
+	resources := filepath.Join(bundle, "Contents", "Resources")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "/usr/bin/plutil", "-extract", "CFBundleIconFile", "raw", "-o", "-", filepath.Join(bundle, "Contents", "Info.plist")).Output()
+	if name := strings.TrimSpace(string(out)); err == nil && name != "" {
+		if !strings.HasSuffix(name, ".icns") {
+			name += ".icns"
+		}
+		if path := filepath.Join(resources, filepath.Base(name)); fileExists(path) {
+			return path
+		}
+	}
+	// Apps whose plist names an asset catalog often still ship this.
+	if path := filepath.Join(resources, "AppIcon.icns"); fileExists(path) {
+		return path
+	}
+	return ""
+}
 
 // appKit loads AppKit, which the app has loaded already; a test has not.
 var appKit = sync.OnceValue(func() bool {

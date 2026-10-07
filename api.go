@@ -487,7 +487,7 @@ func takeover(root map[string]any) []string {
 			reasons = append(reasons, "入站 "+in.tag+" 是透明代理："+in.typ)
 		}
 		if in.systemProxy {
-			reasons = append(reasons, "入站 "+in.tag+" 开启了 set_system_proxy：会改写 macOS 系统代理，停止时直接关闭系统代理")
+			reasons = append(reasons, "入站 "+in.tag+" 开启了 set_system_proxy：会改写"+osName()+"系统代理，停止时直接关闭系统代理")
 		}
 	}
 	for _, section := range []string{"endpoints", "services"} {
@@ -1214,7 +1214,7 @@ func (b *Box) About() About {
 			a.Tags = append(a.Tags, v)
 		}
 	}
-	a.Missing = missingTypes(tags, cgo)
+	a.Missing = missingTypes(runtime.GOOS, tags, cgo)
 	return a
 }
 

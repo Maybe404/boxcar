@@ -10,6 +10,7 @@ import { sectionContexts } from "./docs";
 import { addItem, duplicateItem, isGroup, itemsOf, removeItem, replaceItem, uniqueTag } from "./ops";
 import { tagsOf, tagsOfItem } from "./refs";
 import { getIn, omitKeys, setIn, type Json } from "./path";
+import { trayPlace } from "../platform";
 
 const intervals = [
   { value: "1m", name: "每 1 分钟" },
@@ -166,7 +167,7 @@ function GroupDialog({ config, index, onClose, onSave }: { config: Json; index: 
             </button>
           </div>
         </Row>
-        <Row label="成员" hint={draft.type === "urltest" ? "定时测试这些出站的延迟，自动使用最快的。" : "可以在「节点」页或菜单栏里切换到其中一个。排在第一个的是默认选中的。"}>
+        <Row label="成员" hint={draft.type === "urltest" ? "定时测试这些出站的延迟，自动使用最快的。" : `可以在「节点」页或${trayPlace}图标里切换到其中一个。排在第一个的是默认选中的。`}>
           <div className="members">
             {members.map((m, i) => (
               <div className="member on" key={m}>

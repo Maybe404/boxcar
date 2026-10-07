@@ -11,6 +11,7 @@ import { addItem, disableFakeIP, dnsTemplates, duplicateItem, enableFakeIP, fake
 import { RuleList, TemplateMenu } from "./RulesPane";
 import { tagsOfItem } from "./refs";
 import { getIn, setIn, type Json } from "./path";
+import { osName } from "../platform";
 
 const serverTypes = [
   { type: "https", name: "DNS over HTTPS", detail: "加密，最常用" },
@@ -19,7 +20,7 @@ const serverTypes = [
   { type: "quic", name: "DNS over QUIC", detail: "加密" },
   { type: "udp", name: "普通 DNS（UDP）", detail: "不加密" },
   { type: "tcp", name: "普通 DNS（TCP）", detail: "不加密" },
-  { type: "local", name: "系统 DNS", detail: "用 macOS 的设置" },
+  { type: "local", name: "系统 DNS", detail: `用 ${osName} 的设置` },
   { type: "dhcp", name: "DHCP 下发的 DNS", detail: "" },
   { type: "hosts", name: "hosts 文件", detail: "" },
   { type: "fakeip", name: "FakeIP", detail: "返回虚假地址，透明代理用" },

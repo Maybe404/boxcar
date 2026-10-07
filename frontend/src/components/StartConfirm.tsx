@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { AlertDialog } from "radix-ui";
 import { toast } from "sonner";
 import { box, errorText } from "../api";
+import { isWindows, osName } from "../platform";
 
 type Ask = { reasons: string[]; resolve: (ok: boolean) => void };
 let asker: ((ask: Ask) => void) | null = null;
@@ -44,7 +45,7 @@ export function StartConfirm() {
           </AlertDialog.Title>
           <AlertDialog.Description asChild>
             <div className="muted" style={{ margin: "0 0 4px" }}>
-              启动后会改动 macOS 的网络设置，正在运行的 Surge 等代理的分流可能失效：
+              启动后会改动 {osName} 的网络设置，正在运行的{isWindows ? "其他" : " Surge 等"}代理的分流可能失效：
             </div>
           </AlertDialog.Description>
           <ul className="reasons">

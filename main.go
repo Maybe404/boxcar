@@ -3,7 +3,7 @@
 //go:debug multipathtcp=0
 //go:debug tlssha1=1
 
-// Boxcar is a macOS app that runs the sing-box core inside itself, and
+// Boxcar is a macOS and Windows app that runs the sing-box core inside itself, and
 // starts it only when the user clicks Start. Its window shows the
 // frontend in frontend/, which calls the Box service.
 package main
@@ -12,6 +12,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -101,6 +102,10 @@ func main() {
 			mygo.App.Quit()
 		}()
 	})
+	// Shutting down, logging out or a forced restart ends the app without
+	// asking first, past OnWillQuit: the system proxy still goes back, or
+	// it would point at a port nothing listens on until the app opens.
+	mygo.App.OnQuit(func() { proxy.disable() })
 	mygo.App.WhenReady(func() {
 		mygo.App.SetMenu(buildMenu())
 		t := newTray(box)
@@ -124,7 +129,7 @@ func showWindow() {
 		win.Focus()
 		return
 	}
-	win = mygo.NewWindow(mygo.WindowOptions{
+	opts := mygo.WindowOptions{
 		Title:          appName,
 		Width:          1120,
 		Height:         740,
@@ -137,7 +142,14 @@ func showWindow() {
 		Vibrancy:        mygo.VibrancySidebar,
 		BackgroundColor: "light-dark(#ececec, #262626)",
 		URL:             "/",
-	})
+	}
+	if runtime.GOOS == "windows" {
+		// The window buttons at the top right, over the page's title bar,
+		// and Mica behind the sidebar (Windows 11).
+		opts.TitleBarStyle, opts.TitleBarHeight, opts.Vibrancy = mygo.TitleBarHidden, 40, mygo.VibrancyMica
+		opts.BackgroundColor = "light-dark(#f3f3f3, #202020)"
+	}
+	win = mygo.NewWindow(opts)
 	// The page is the app's own and goes nowhere else: no new windows, no
 	// navigation away, so nothing loads from the network.
 	win.Page().SetWindowOpenHandler(func(mygo.WindowOpenRequest) *mygo.WindowOptions { return nil })
@@ -152,6 +164,17 @@ func showWindow() {
 // "import".
 var Navigate = mygo.NewEvent[string]("navigate")
 
+// editMenu is the edit menu on macOS, where the page's text fields need
+// it for copy and paste. On Windows WebView2 handles those keys itself,
+// and a menu taking them would undo through the browser rather than the
+// JSON editor's own history.
+func editMenu() *mygo.MenuItem {
+	if runtime.GOOS == "darwin" {
+		return &mygo.MenuItem{Role: mygo.RoleEditMenu}
+	}
+	return &mygo.MenuItem{Role: mygo.RoleEditMenu, Hidden: true}
+}
+
 func buildMenu() *mygo.Menu {
 	page := func(path string) func(*mygo.MenuItem, *mygo.Window) {
 		return func(_ *mygo.MenuItem, w *mygo.Window) {
@@ -159,6 +182,22 @@ func buildMenu() *mygo.Menu {
 				Navigate.Emit(w, path)
 			}
 		}
+	}
+	file := []*mygo.MenuItem{
+		{Label: "导入配置…", Accelerator: "CmdOrCtrl+O", Click: page("import")},
+		mygo.Separator(),
+		{Role: mygo.RoleClose},
+	}
+	// The menu named after the app is macOS's, and left out elsewhere:
+	// its settings and quitting go in the file menu.
+	if runtime.GOOS != "darwin" {
+		file = append(file[:1],
+			mygo.Separator(),
+			&mygo.MenuItem{Label: "设置…", Accelerator: "CmdOrCtrl+,", Click: page("settings")},
+			mygo.Separator(),
+			&mygo.MenuItem{Role: mygo.RoleClose},
+			&mygo.MenuItem{Role: mygo.RoleQuit},
+		)
 	}
 	return mygo.NewMenu([]*mygo.MenuItem{
 		{Role: mygo.RoleAppMenu, Submenu: []*mygo.MenuItem{
@@ -174,12 +213,8 @@ func buildMenu() *mygo.Menu {
 			mygo.Separator(),
 			{Role: mygo.RoleQuit},
 		}},
-		{Label: "文件", Submenu: []*mygo.MenuItem{
-			{Label: "导入配置…", Accelerator: "CmdOrCtrl+O", Click: page("import")},
-			mygo.Separator(),
-			{Role: mygo.RoleClose},
-		}},
-		{Role: mygo.RoleEditMenu},
+		{Label: "文件", Submenu: file},
+		editMenu(),
 		{Label: "显示", Submenu: []*mygo.MenuItem{
 			{Label: "线路", Accelerator: "CmdOrCtrl+1", Click: page("line")},
 			{Label: "节点", Accelerator: "CmdOrCtrl+2", Click: page("nodes")},

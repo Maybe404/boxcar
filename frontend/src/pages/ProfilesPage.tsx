@@ -10,6 +10,7 @@ import { box, errorText, events, type CheckResult, type Profile, type Profiles, 
 import { CompareDialog, type Side } from "../components/CompareDialog";
 import { ago, bytes } from "../format";
 import { editorTheme, highlight } from "../editorTheme";
+import { fileManager, isWindows, mod } from "../platform";
 
 // The visual editor carries the schema and the documentation of the core:
 // loaded when first shown.
@@ -331,7 +332,7 @@ export function ProfilesPage({ snap, importPending, onImportHandled, onDirtyChan
                       <Pencil size={14} /> 重命名…
                     </DropdownMenu.Item>
                     <DropdownMenu.Item className="menu-item" onSelect={() => box.revealProfile(profile.name)}>
-                      <FolderOpen size={14} /> 在访达中显示
+                      <FolderOpen size={14} /> 在{fileManager}中显示
                     </DropdownMenu.Item>
                     <DropdownMenu.Separator className="menu-sep" />
                     <DropdownMenu.Item className="menu-item" onSelect={() => setDeleting(true)}>
@@ -463,7 +464,7 @@ export function ProfilesPage({ snap, importPending, onImportHandled, onDirtyChan
                     还原
                   </button>
                   <button className="btn primary" onClick={save}>
-                    保存 <kbd style={{ color: "inherit", opacity: 0.75 }}>⌘S</kbd>
+                    保存 <kbd style={{ color: "inherit", opacity: 0.75 }}>{mod}S</kbd>
                   </button>
                 </>
               )}
@@ -531,7 +532,7 @@ export function ProfilesPage({ snap, importPending, onImportHandled, onDirtyChan
       <RemoteDialog
         open={adding}
         title="添加订阅"
-        description="App 会下载这个地址的 sing-box 配置，并按间隔自动更新。下载走系统代理（如 Surge），不经过内核。"
+        description={`App 会下载这个地址的 sing-box 配置，并按间隔自动更新。下载走系统代理${isWindows ? "" : "（如 Surge）"}，不经过内核。`}
         submit="下载并添加"
         withName
         onOpenChange={setAdding}

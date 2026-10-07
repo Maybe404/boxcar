@@ -341,7 +341,7 @@ func toConnection(m *trafficcontrol.TrackerMetadata, closedAt time.Time, up, dow
 	if p := md.ProcessInfo; p != nil {
 		if len(p.ProcessPaths) > 0 {
 			c.ProcessPath = p.ProcessPaths[0]
-			c.Process = p.ProcessPaths[0][strings.LastIndex(p.ProcessPaths[0], "/")+1:]
+			c.Process = p.ProcessPaths[0][strings.LastIndexAny(p.ProcessPaths[0], `/\`)+1:]
 		}
 		// The process that opened the socket, when it did so for the app.
 		if len(p.ProcessPaths) > 1 {

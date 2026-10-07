@@ -6,7 +6,7 @@
 
 web
 
-(A web frontend rendered in the system WebView of a macOS app built with MyGo; it should feel native to macOS.)
+(A web frontend rendered in the system WebView of a macOS and Windows app built with MyGo: WKWebView on macOS, WebView2 on Windows; it should feel native to each. On Windows: Segoe UI and Microsoft YaHei, the window buttons at the top right, Mica behind the sidebar, Ctrl for shortcuts, the notification area for the tray icon.)
 
 ## Stack
 
@@ -19,7 +19,7 @@ Go app on MyGo, sing-box linked in as a Go library. The interface is a React + V
 
 ## Product Purpose
 
-A friendly macOS app that brings the sing-box core to everyday users: start and stop the embedded core, see its state and traffic, choose nodes in outbound groups and test their latency, manage configuration files, and look into connections and logs when something goes wrong. Success is an app the user enjoys opening and others can use without reading sing-box docs.
+A friendly macOS and Windows app that brings the sing-box core to everyday users: start and stop the embedded core, see its state and traffic, choose nodes in outbound groups and test their latency, manage configuration files, and look into connections and logs when something goes wrong. Success is an app the user enjoys opening and others can use without reading sing-box docs.
 
 ## Positioning
 

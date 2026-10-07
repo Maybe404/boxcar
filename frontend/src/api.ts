@@ -4,6 +4,7 @@
 import { isMyGo } from "mygo-runtime";
 import { Box, events as goEvents } from "./mygo";
 import { parseConfig, stringifyConfig } from "./config/jsonc";
+import { isWindows } from "./platform";
 import type {
   About,
   Activity,
@@ -269,8 +270,14 @@ function makePreview() {
     destination: i % 5 === 4 ? "1.1.1.1:53" : `${hosts[i % hosts.length]}:443`,
     domain: i % 5 === 4 ? "" : hosts[i % hosts.length],
     protocol: i % 5 === 4 ? "dns" : "tls",
-    process: i % 2 ? "Safari" : "curl",
-    processPath: i % 2 ? "/Applications/Safari.app/Contents/MacOS/Safari" : "/usr/bin/curl",
+    process: isWindows ? (i % 2 ? "msedge.exe" : "curl.exe") : i % 2 ? "Safari" : "curl",
+    processPath: isWindows
+      ? i % 2
+        ? "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe"
+        : "C:\\Windows\\System32\\curl.exe"
+      : i % 2
+        ? "/Applications/Safari.app/Contents/MacOS/Safari"
+        : "/usr/bin/curl",
     rule: i === 1 ? "domain_suffix=github.com => route(proxy)" : "final",
     routingMs: 2 + (i % 4) * 3,
     error: i === 6 ? "outbound/vless[香港 01]: open connection to fonts.gstatic.com:443 using outbound/vless[香港 01]: dial tcp 203.0.113.9:443: i/o timeout" : undefined,
@@ -443,7 +450,8 @@ function makePreview() {
       return connLines[logId] ?? [];
     },
     async processIcon(path: string) {
-      return path.includes(".app/") ? appIcon : "";
+      // A program of the system shows the generic mark, as curl does.
+      return path.includes(".app/") || (/\.exe$/i.test(path) && !/System32/i.test(path)) ? appIcon : "";
     },
     async queryDNS(name: string, qtype: string): Promise<DNSResult> {
       if (status !== "running") throw new Error("内核没有运行");
@@ -603,11 +611,12 @@ function makePreview() {
         app: "0.2.0",
         version: "1.14.2（预览）",
         go: "go1.27.1",
-        platform: "darwin/arm64",
+        platform: isWindows ? "windows/amd64" : "darwin/arm64",
         mygo: "0.2.12",
         tags: ["quic", "utls", "wireguard", "tailscale", "clash_api"],
-        missing: ["outbounds/naive", "services/ccm", "services/usbip-client", "services/usbip-server"],
-        dataDir: "~/Library/Application Support/Boxcar",
+        // As the builds leave them out: Windows builds ccm and usbip without cgo.
+        missing: isWindows ? ["outbounds/naive"] : ["outbounds/naive", "services/ccm", "services/usbip-client", "services/usbip-server"],
+        dataDir: isWindows ? "~\\AppData\\Roaming\\Boxcar" : "~/Library/Application Support/Boxcar",
       };
     },
   } satisfies { [K in keyof typeof Box]: (...args: never[]) => Promise<unknown> };

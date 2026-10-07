@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"fmt"
 	"log"
+	"runtime"
 	"strings"
 
 	"github.com/egoist/mygo"
@@ -12,6 +13,12 @@ import (
 
 //go:embed resources/tray.png
 var trayIcon []byte
+
+// trayIconWindows is in color: the taskbar may be dark or light, and
+// Windows does not tint a template as the macOS menu bar does.
+//
+//go:embed resources/tray-windows.png
+var trayIconWindows []byte
 
 // tray is the icon in the menu bar: the rates while running, and a menu
 // to start and stop, switch the mode and the nodes, and open the window.
@@ -25,10 +32,14 @@ type tray struct {
 
 func newTray(b *Box) *tray {
 	t := &tray{box: b}
-	icon, err := mygo.NewTray(mygo.TrayOptions{Icon: trayIcon, IconIsTemplate: true, ToolTip: appName})
+	opts := mygo.TrayOptions{Icon: trayIcon, IconIsTemplate: true, ToolTip: appName}
+	if runtime.GOOS == "windows" {
+		opts = mygo.TrayOptions{Icon: trayIconWindows, ToolTip: appName}
+	}
+	icon, err := mygo.NewTray(opts)
 	if err != nil {
 		log.Println("tray:", err)
-		b.note(sblog.LevelError, "没能创建菜单栏图标：%v", err)
+		b.note(sblog.LevelError, "没能创建%s图标：%v", trayPlace(), err)
 		return t
 	}
 	t.icon = icon
@@ -47,7 +58,15 @@ func (t *tray) update(s Snapshot) {
 	}
 	if title != t.title {
 		t.title = title
-		t.icon.SetTitle(title)
+		// macOS shows the rates beside the icon; Windows has no room
+		// there, and shows them on hovering it.
+		if runtime.GOOS == "darwin" {
+			t.icon.SetTitle(title)
+		} else if title != "" {
+			t.icon.SetToolTip(appName + " · " + title)
+		} else {
+			t.icon.SetToolTip(appName)
+		}
 	}
 	var groups []OutboundGroup
 	if s.Status == StatusRunning {

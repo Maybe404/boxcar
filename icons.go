@@ -1,12 +1,10 @@
 package main
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -14,9 +12,10 @@ import (
 )
 
 // The connections name the program that made them by its path; the page
-// shows the icon of the app it belongs to. The icon is read from the
-// app's bundle with the system's own plutil and sips, which only read it,
-// and kept: in memory, and as a small PNG in the data directory.
+// shows the icon of the app it belongs to, kept in memory and as a small
+// PNG in the data directory. Each platform says which app a path is
+// (iconKey), when it last changed (iconStamp), and draws its icon as a
+// PNG about 64 pixels wide (drawIcon): icons_darwin.go, icons_windows.go.
 
 type iconCache struct {
 	dir   string
@@ -55,7 +54,7 @@ func bundleOf(path string) string {
 // icon returns the icon of the app a program's path is in, as a data URL
 // of a PNG, or "" when it has none.
 func (c *iconCache) icon(path string) string {
-	bundle := bundleOf(path)
+	bundle := iconKey(path)
 	if bundle == "" {
 		return ""
 	}
@@ -74,16 +73,18 @@ func (c *iconCache) icon(path string) string {
 	return url
 }
 
-func (c *iconCache) load(bundle string) string {
-	// An app that is gone has no icon: Finder would give a generic one.
-	plist, err := os.Stat(filepath.Join(bundle, "Contents", "Info.plist"))
-	if err != nil {
+// load reads the icon of an app from the cache on disk, or draws it and
+// keeps it there.
+func (c *iconCache) load(app string) string {
+	// An app that is gone has no icon, rather than a generic one.
+	changed, ok := iconStamp(app)
+	if !ok {
 		return ""
 	}
-	sum := sha256.Sum256([]byte(bundle))
+	sum := sha256.Sum256([]byte(app))
 	cached := filepath.Join(c.dir, hex.EncodeToString(sum[:8])+".png")
-	// Made again once the app is updated, which rewrites its Info.plist.
-	if info, err := os.Stat(cached); err == nil && !plist.ModTime().After(info.ModTime()) {
+	// Made again once the app is updated.
+	if info, err := os.Stat(cached); err == nil && !changed.After(info.ModTime()) {
 		if data, err := os.ReadFile(cached); err == nil {
 			return dataURL(data)
 		}
@@ -91,51 +92,11 @@ func (c *iconCache) load(bundle string) string {
 	if err := os.MkdirAll(c.dir, 0o755); err != nil {
 		return ""
 	}
-	icns := iconFile(bundle)
-	if icns == "" {
-		// The icon Finder shows, drawn at its size by AppKit.
-		png := workspaceIcon(bundle)
-		if png == nil || writeAtomic(c.dir, cached, png) != nil {
-			return ""
-		}
-		return dataURL(png)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	tmp := cached + ".tmp.png"
-	if err := exec.CommandContext(ctx, "/usr/bin/sips", "-s", "format", "png", "-Z", "64", icns, "--out", tmp).Run(); err != nil {
-		os.Remove(tmp)
+	png := drawIcon(app, cached+".tmp")
+	if png == nil || writeAtomic(c.dir, cached, png) != nil {
 		return ""
 	}
-	if err := os.Rename(tmp, cached); err != nil {
-		return ""
-	}
-	data, err := os.ReadFile(cached)
-	if err != nil {
-		return ""
-	}
-	return dataURL(data)
-}
-
-// iconFile finds the .icns of a bundle, as its Info.plist names it.
-func iconFile(bundle string) string {
-	resources := filepath.Join(bundle, "Contents", "Resources")
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	out, err := exec.CommandContext(ctx, "/usr/bin/plutil", "-extract", "CFBundleIconFile", "raw", "-o", "-", filepath.Join(bundle, "Contents", "Info.plist")).Output()
-	if name := strings.TrimSpace(string(out)); err == nil && name != "" {
-		if !strings.HasSuffix(name, ".icns") {
-			name += ".icns"
-		}
-		if path := filepath.Join(resources, filepath.Base(name)); fileExists(path) {
-			return path
-		}
-	}
-	// Apps whose plist names an asset catalog often still ship this.
-	if path := filepath.Join(resources, "AppIcon.icns"); fileExists(path) {
-		return path
-	}
-	return ""
+	return dataURL(png)
 }
 
 func fileExists(path string) bool {

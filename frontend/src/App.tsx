@@ -15,6 +15,7 @@ import { ProfilesPage } from "./pages/ProfilesPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { CommandBar } from "./components/CommandBar";
 import { StartConfirm, startCore } from "./components/StartConfirm";
+import { mod, modHeld } from "./platform";
 
 export function App() {
   const snap = useSnapshot();
@@ -63,7 +64,7 @@ export function App() {
   useEffect(() => events.navigate.on(go), [go]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!e.metaKey) return;
+      if (!modHeld(e)) return;
       if (e.key === "k") {
         e.preventDefault();
         setCommand((o) => !o);
@@ -136,7 +137,7 @@ export function App() {
           <button className="nav-item" onClick={() => setCommand(true)}>
             <Command size={15} strokeWidth={1.8} />
             命令栏
-            <span className="count">⌘K</span>
+            <span className="count">{mod}K</span>
           </button>
           <div className="sidebar-status" role="status">
             <span className={`dot ${running ? "on" : snap.status === "stopped" ? (snap.error ? "fail" : "") : "busy"}`} />

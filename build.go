@@ -1,6 +1,7 @@
 package main
 
 import (
+	"runtime"
 	"runtime/debug"
 	"slices"
 	"strings"
@@ -12,7 +13,8 @@ import (
 // marks these. Kept in step with sing-box's include/*_stub.go.
 var optionalTypes = []struct {
 	tag string
-	// cgo is set when the type needs cgo on macOS as well.
+	// cgo is set when the type needs cgo on macOS as well; Windows and
+	// Linux build it without.
 	cgo   bool
 	types []string
 }{
@@ -49,14 +51,30 @@ func buildTags() ([]string, bool) {
 	return tags, cgo
 }
 
-// missingTypes lists the types this build leaves out, as section/type:
-// "outbounds/naive".
-func missingTypes(tags []string, cgo bool) []string {
+// missingTypes lists the types a build for goos leaves out, as
+// section/type: "outbounds/naive".
+func missingTypes(goos string, tags []string, cgo bool) []string {
 	missing := []string{}
 	for _, o := range optionalTypes {
-		if !slices.Contains(tags, o.tag) || (o.cgo && !cgo) {
+		if !slices.Contains(tags, o.tag) || (o.cgo && goos == "darwin" && !cgo) {
 			missing = append(missing, o.types...)
 		}
 	}
 	return missing
+}
+
+// osName is the system, spaced to sit between Chinese words.
+func osName() string {
+	if runtime.GOOS == "windows" {
+		return " Windows "
+	}
+	return " macOS "
+}
+
+// trayPlace is where the app's icon is beside the clock.
+func trayPlace() string {
+	if runtime.GOOS == "windows" {
+		return "通知区域"
+	}
+	return "菜单栏"
 }

@@ -30,6 +30,46 @@
   --titlebar: var(--mygo-titlebar-height, 52px);
 }
 
+/* Windows: its own fonts, and scroll bars as thin as macOS's. */
+:root[data-platform="windows"] {
+  --font: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  --mono: "Cascadia Mono", Consolas, "Microsoft YaHei UI", monospace;
+  --titlebar: var(--mygo-titlebar-height, 40px);
+}
+:root[data-platform="windows"] ::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+:root[data-platform="windows"] ::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 6px;
+  background: var(--hair-strong);
+  background-clip: content-box;
+}
+:root[data-platform="windows"] ::-webkit-scrollbar-track {
+  background: transparent;
+}
+/* The preview of Windows: room for the window buttons the app draws at the
+   top right, and a stand-in for them. */
+:root.preview[data-platform="windows"] {
+  --mygo-titlebar-height: 40px;
+  --mygo-titlebar-inset-right: 138px;
+}
+:root.preview[data-platform="windows"] body::after {
+  content: "—     ▢     ✕";
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: 138px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  color: var(--text-2);
+  font-size: 12px;
+  white-space: pre;
+  pointer-events: none;
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #1f1f21;

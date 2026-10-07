@@ -11,6 +11,7 @@ import { sectionContexts } from "./docs";
 import { addItem, duplicateItem, itemsOf, removeItem, replaceItem, uniqueTag } from "./ops";
 import { tagsOfItem } from "./refs";
 import { getIn, isObject, omitKeys, setIn, type Json } from "./path";
+import { isWindows, osName, trayPlace } from "../platform";
 
 /** Ports other proxy apps use by default. */
 const knownPorts: Record<number, string> = {
@@ -43,7 +44,7 @@ export function takeoverOf(inbound: Json): string | null {
   if (!isObject(inbound)) return null;
   if (inbound.type === "tun") return "创建虚拟网卡并接管系统路由";
   if (inbound.type === "redirect" || inbound.type === "tproxy") return "透明代理，需要改系统路由";
-  if (inbound.set_system_proxy) return "启动时改写 macOS 系统代理";
+  if (inbound.set_system_proxy) return `启动时改写 ${osName} 系统代理`;
   return null;
 }
 
@@ -107,9 +108,9 @@ export function InboundsPane({ config, onChange }: PaneProps) {
         <div className="caution">
           <TriangleAlert size={14} />
           <div>
-            <p>TUN 入站在启动时创建虚拟网卡并改写系统路由，所有程序的流量都会经过内核。它会和 Surge 等同样接管网络的工具冲突，停止前其他代理工具可能无法正常工作。</p>
+            <p>TUN 入站在启动时创建虚拟网卡并改写系统路由，所有程序的流量都会经过内核。它会和{isWindows ? "其他" : " Surge 等"}同样接管网络的工具冲突，停止前其他代理工具可能无法正常工作。</p>
             <p>只想让个别程序走内核时，用上面的本地端口就够了；想让系统里的程序默认走内核，可以在「设置」里打开「设为系统代理」，停止时会恢复原来的设置。</p>
-            <p>启动这类配置前，App 会逐项列出它要改动的地方并再次询问；菜单栏不能启动它们。</p>
+            <p>启动这类配置前，App 会逐项列出它要改动的地方并再次询问；{trayPlace}图标不能启动它们。</p>
           </div>
         </div>
         <button className="btn" onClick={() => setAskTun(true)} disabled={hasTun}>
@@ -151,7 +152,7 @@ export function InboundsPane({ config, onChange }: PaneProps) {
                   <li>创建虚拟网卡，地址 172.19.0.1/30 和 fdfe:dcba:9876::1/126</li>
                   <li>自动改写系统路由（auto_route），让所有流量经过内核</li>
                   <li>开启严格路由（strict_route），不让流量绕过虚拟网卡</li>
-                  <li>与 Surge 等接管网络的工具冲突</li>
+                  <li>与{isWindows ? "其他" : " Surge 等"}接管网络的工具冲突</li>
                 </ul>
                 <p style={{ marginTop: 12 }}>现在只是写进配置，不会启动内核，也不会改动网络。</p>
               </div>
@@ -311,7 +312,7 @@ function InboundDialog({ config, index, onClose, onSave }: { config: Json; index
                       <code className="f-key">set_system_proxy</code>
                     </div>
                     <div className="f-desc">
-                      内核启动时直接改写 macOS 系统代理，停止时直接关闭，不会恢复成原来的设置（例如 Surge 的）。推荐改用「设置 → 设为系统代理」，它会在停止后恢复原设置。
+                      内核启动时直接改写 {osName} 系统代理，停止时直接关闭，不会恢复成原来的设置{isWindows ? "" : "（例如 Surge 的）"}。推荐改用「设置 → 设为系统代理」，它会在停止后恢复原设置。
                     </div>
                   </div>
                   <Switch.Root className="switch" checked={!!draft.set_system_proxy} onCheckedChange={(on) => set("set_system_proxy", on || undefined)} aria-label="启动时设为系统代理">

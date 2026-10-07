@@ -36,9 +36,12 @@
   ```sh
   TAGS=$(tr -d '\n' < "$(go list -m -f '{{.Dir}}' github.com/sagernet/sing-box)/release/DEFAULT_BUILD_TAGS_OTHERS" | tr ',' '\n' | grep -v -e badlinkname -e tfogo | paste -sd, -)
   CGO_ENABLED=0 go vet -tags "$TAGS" . && CGO_ENABLED=0 go test -tags "$TAGS" .
+  WTAGS=$(tr -d '\n' < "$(go list -m -f '{{.Dir}}' github.com/sagernet/sing-box)/release/DEFAULT_BUILD_TAGS_WINDOWS" | tr ',' '\n' | grep -v -e badlinkname -e tfogo -e with_naive_outbound -e with_purego | paste -sd, -)
+  GOOS=windows CGO_ENABLED=0 go vet -tags "$WTAGS" .
   (cd frontend && bunx tsc --noEmit && bun test)
   ```
-  然后用浏览器预览检查改到的界面（浅色和深色）。
+  然后用浏览器预览检查改到的界面（浅色和深色；改到平台相关的界面时，再加 `?platform=windows` 看一遍）。
+- Windows 版（#12）只能在 Mac 上交叉编译和 vet，跑不了：`*_windows.go` 里的系统调用（注册表、wininet、shell32、GDI）要把验证点追加到 #6，由维护者在 Windows 实机上测。和 macOS 一样，不在这台机器上调用会改系统代理的代码。
 - 改了 Go 端绑定（`api.go` 里 `Box` 的方法或类型）后，运行 `CGO_ENABLED=0 GOFLAGS="-tags=$TAGS" go tool mygo generate` 重新生成 `frontend/src/mygo.ts`，并同步更新 `frontend/src/api.ts` 里预览用的合成实现。
 - 改了 go.mod 里的内核版本后，运行 `go run ./tools/configschema` 重新生成 `frontend/src/config/gen/`（表单用的 schema、中文字段说明、文档示例），`go test` 会检查版本是否一致。改了向导的写法后，`UPDATE=1 bun test` 更新 `testdata/wizard/` 的金样，Go 测试会用 `checkConfig` 校验它们。
 - 提交信息用英文 conventional commits；界面文字、文档、Issue 用中文。
@@ -56,11 +59,11 @@
   - `api.go`：绑定给前端的 `Box` 服务
   - `history.go`：连接记录（同步追踪器，含 TUN 预匹配的 flow）
   - `dnslog.go`：从内核日志整理 DNS 查询，按日志编号保存每个连接的日志（依赖内核日志文案，`dnslog_test.go` 用内核自己的 DNS 客户端产生日志来守住）
-  - `icons.go`：进程所在 App 的图标（`plutil`、`sips`、AppKit 的 NSWorkspace，只读）
+  - `icons.go`：进程所在 App 的图标的缓存；`icons_darwin.go`（`plutil`、`sips`、AppKit 的 NSWorkspace，只读）、`icons_windows.go`（从 .exe 取图标）
   - `activity.go`：从日志提取的内核自身活动
-  - `sysproxy.go`：可恢复的系统代理
+  - `sysproxy.go`：可恢复的系统代理；`sysproxy_darwin.go`（`networksetup`）、`sysproxy_windows.go`（当前用户的 Internet 设置）
   - `subscription.go`：远程订阅
-  - `tray.go`：菜单栏图标
+  - `tray.go`：菜单栏图标（Windows 上是通知区域图标）
   - `store.go`：配置文件和设置
   - `refs.go`：静态引用检查（由 schema 的 `x-tag-reference` 驱动）
   - `legacy.go`：从改名前的 SingBox 数据目录导入
