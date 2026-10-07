@@ -6,6 +6,23 @@ Boxcar is a macOS and Windows app that brings a capable proxy core to everyday u
 
 > Boxcar 是独立项目，内核使用 [sing-box](https://github.com/SagerNet/sing-box)（GPL-3.0-or-later）。本项目与 sing-box 及其作者没有关联，也未获得其背书。
 
+## 下载
+
+最新的测试版是 [v0.3.0](https://github.com/Maybe404/boxcar/releases/tag/v0.3.0)（预发布）：
+
+| 系统 | 下载 |
+|---|---|
+| macOS · Apple 芯片 | [Boxcar-0.3.0-macos-arm64.dmg](https://github.com/Maybe404/boxcar/releases/download/v0.3.0/Boxcar-0.3.0-macos-arm64.dmg) |
+| macOS · Intel | [Boxcar-0.3.0-macos-amd64.dmg](https://github.com/Maybe404/boxcar/releases/download/v0.3.0/Boxcar-0.3.0-macos-amd64.dmg) |
+| Windows · x64 | [Boxcar-0.3.0-windows-amd64-setup.exe](https://github.com/Maybe404/boxcar/releases/download/v0.3.0/Boxcar-0.3.0-windows-amd64-setup.exe) |
+| Windows · ARM | [Boxcar-0.3.0-windows-arm64-setup.exe](https://github.com/Maybe404/boxcar/releases/download/v0.3.0/Boxcar-0.3.0-windows-arm64-setup.exe) |
+
+所有版本见 [Releases](https://github.com/Maybe404/boxcar/releases)。
+
+- 安装包暂时**没有签名**：macOS 第一次打开时请在访达里右键 →「打开」；Windows 的 SmartScreen 提示请点「更多信息」→「仍要运行」。
+- Windows 版还没有在实机上验证过（清单见 [#6](https://github.com/Maybe404/boxcar/issues/6)），可能有问题。
+- Windows 安装包装在当前用户目录，不需要管理员权限；需要 WebView2 运行时（Windows 11 自带，Windows 10 多数已装）。
+
 ## 特点
 
 - **内核内置**：内核作为 Go 库编译进 App，一个 App 就是全部，不需要另装命令行程序或系统扩展。
@@ -20,6 +37,8 @@ Boxcar is a macOS and Windows app that brings a capable proxy core to everyday u
 - **规则 / 全局 / 直连** 模式切换、节点测速、系统代理（关闭时恢复原来的设置）、菜单栏图标、⌘K 命令栏、浅色与深色。
 
 ## 构建
+
+发布：把 `mygo.json` 的 `version` 改好并提交，推送同名 tag（例如 `git tag v0.3.1 && git push origin v0.3.1`），GitHub Actions（`.github/workflows/release.yml`）会构建 macOS 和 Windows 的安装包并发布为预发布版本。在仓库的 Secrets 里放好证书后会自动签名：Windows 需要 `WINDOWS_CERTIFICATE`（base64 的 .pfx）和 `WINDOWS_CERTIFICATE_PASSWORD`；macOS 需要 `MACOS_CERTIFICATE`（base64 的 .p12）、`MACOS_CERTIFICATE_PASSWORD`、`MACOS_SIGNING_IDENTITY`、`APPLE_ID`、`APPLE_TEAM_ID`、`APPLE_APP_PASSWORD`。
 
 需要 Go 1.27 与 Bun。
 

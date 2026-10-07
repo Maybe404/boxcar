@@ -1,0 +1,130 @@
+# Builds the installers when a version is tagged, and publishes them in a
+# GitHub release as a pre-release. The macOS app builds on a macOS runner,
+# which makes disk images; the Windows installers on Ubuntu, with NSIS.
+# Building starts nothing: the app starts its core only when its user does.
+#
+# Signing, when the secrets are set (see README):
+#   Windows   WINDOWS_CERTIFICATE (base64 .pfx), WINDOWS_CERTIFICATE_PASSWORD
+#   macOS     MACOS_CERTIFICATE (base64 .p12), MACOS_CERTIFICATE_PASSWORD,
+#             MACOS_SIGNING_IDENTITY, APPLE_ID, APPLE_TEAM_ID, APPLE_APP_PASSWORD
+# Without them the apps are not signed for other machines.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write # the release, and the uploads to it
+
+jobs:
+  draft:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check the version
+        run: test "$GITHUB_REF_NAME" = "v$(jq -r .version mygo.json)"
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" --draft --prerelease --verify-tag \
+              --title "Boxcar ${GITHUB_REF_NAME#v}" --notes-file .github/release-notes.md
+          fi
+
+  build:
+    needs: draft
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: macOS, os: macos-latest, args: "--platform darwin/arm64,darwin/amd64" }
+          - { name: Windows, os: ubuntu-latest, args: "-windows" }
+    env:
+      GH_TOKEN: ${{ github.token }}
+      # Whether to sign: set from the secrets, which an if cannot read.
+      SIGN_WINDOWS: ${{ secrets.WINDOWS_CERTIFICATE != '' }}
+      SIGN_MACOS: ${{ secrets.MACOS_CERTIFICATE != '' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+        working-directory: frontend
+
+      - name: Install NSIS and osslsigncode
+        if: matrix.name == 'Windows'
+        run: sudo apt-get update && sudo apt-get install -y nsis osslsigncode
+      - name: Sign the Windows apps with the certificate
+        if: matrix.name == 'Windows' && env.SIGN_WINDOWS == 'true'
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+        run: |
+          echo "$WINDOWS_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/code-signing.pfx"
+          jq --arg p "$RUNNER_TEMP/code-signing.pfx" '.windows.certificate = $p' mygo.json > "$RUNNER_TEMP/mygo.json"
+          mv "$RUNNER_TEMP/mygo.json" mygo.json
+
+      - name: Sign and notarize the macOS app with the Developer ID
+        if: matrix.name == 'macOS' && env.SIGN_MACOS == 'true'
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          password="$(openssl rand -base64 24)"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          echo "$MACOS_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm "$RUNNER_TEMP/certificate.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain"
+          security list-keychains -d user -s "$keychain" login.keychain
+          xcrun notarytool store-credentials notary --keychain "$keychain" \
+            --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD"
+          jq --arg id "$MACOS_SIGNING_IDENTITY" --arg k "$keychain" \
+            '.macos.signingIdentity = $id | .macos.notarize = {keychainProfile: "notary", keychain: $k}' mygo.json > "$RUNNER_TEMP/mygo.json"
+          mv "$RUNNER_TEMP/mygo.json" mygo.json
+
+      - name: Build
+        env:
+          MYGO_WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: ./build.sh ${{ matrix.args }}
+
+      # The installers of each architecture have the same name: named
+      # apart before they go into the release.
+      - name: Upload to the release
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          mkdir -p dist
+          for dir in build/*/; do
+            target="$(basename "$dir")" # as darwin-arm64, windows-amd64
+            for f in "$dir"*.dmg; do
+              [ -e "$f" ] && cp "$f" "dist/Boxcar-$version-${target/darwin/macos}.dmg"
+            done
+            for f in "$dir"*Setup*.exe; do
+              [ -e "$f" ] && cp "$f" "dist/Boxcar-$version-$target-setup.exe"
+            done
+          done
+          ls -l dist
+          test -n "$(ls dist)"
+          gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish the release, as a pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease
