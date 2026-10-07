@@ -156,6 +156,13 @@ func collectExamples(root string) []Example {
 }
 
 func goList(format string) string {
+	// go list names no directory for a module not yet downloaded, as on
+	// a fresh CI runner.
+	download := exec.Command("go", "mod", "download", "github.com/sagernet/sing-box")
+	download.Stderr = os.Stderr
+	if err := download.Run(); err != nil {
+		log.Fatal(err)
+	}
 	cmd := exec.Command("go", "list", "-m", "-f", format, "github.com/sagernet/sing-box")
 	cmd.Stderr = os.Stderr
 	b, err := cmd.Output()
